@@ -23,7 +23,7 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=5
+stage=6
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
@@ -165,6 +165,50 @@ if [ $stage -le 5 ]; then
 
   # Now we're ready to create training examples.
   utils/fix_data_dir.sh $data2/voxceleb_train_combined_no_sil
+fi
+
+if [ $stage -le 6 ]; then
+  # Split the validation set
+  # There are 2 validation sets, 1 for softmax-like loss function and 1 for end2end loss.
+  # The speakers are the same with the training set for softmax-like loss
+  # and the speakers are different for end2end loss.
+
+  # Get the validation set.
+  num_heldout_spks=64
+  num_heldout_utts=1000
+  mkdir -p $data2/voxceleb_train_combined_no_sil/softmax_valid/ $data2/voxceleb_train_combined_no_sil/end2end_valid/ $data2/voxceleb_train_combined_no_sil/train
+
+  echo "$0: Preparing end2end loss validation lists"
+  end2end_valid_dir=$data2/voxceleb_train_combined_no_sil/end2end_valid/
+  awk '{print (NF-1)" "$1}' $data2/voxceleb_train_combined_no_sil/spk2utt | sort -nr | awk '{print $2" "$1}' | head -1000 > $end2end_valid_dir/valid_candidate
+  utils/filter_scp.pl $end2end_valid_dir/valid_candidate $data2/voxceleb_train_combined_no_sil/spk2utt | utils/shuffle_list.pl | head -$num_heldout_spks > $end2end_valid_dir/spk2utt || exit 1
+  utils/spk2utt_to_utt2spk.pl $end2end_valid_dir/spk2utt > $end2end_valid_dir/utt2spk
+  cp $data2/voxceleb_train_combined_no_sil/feats.scp $end2end_valid_dir
+  utils/fix_data_dir.sh $end2end_valid_dir
+
+  echo "$0: Preparing softmax loss validation lists"
+  train_dir=$data2/voxceleb_train_combined_no_sil/train/
+  softmax_valid_dir=$data2/voxceleb_train_combined_no_sil/softmax_valid/
+  utils/filter_scp.pl --exclude $end2end_valid_dir/spk2utt $data2/voxceleb_train_combined_no_sil/spk2utt > $train_dir/spk2utt
+  utils/spk2utt_to_utt2spk.pl $train_dir/spk2utt > $train_dir/utt2spk
+  cp $data2/voxceleb_train_combined_no_sil/feats.scp $train_dir
+  utils/filter_scp.pl $train_dir/utt2spk $data2/voxceleb_train_combined_no_sil/utt2num_frames > $train_dir/utt2num_frames
+  utils/fix_data_dir.sh $train_dir
+
+  awk '{print $2" "$1}' $train_dir/utt2num_frames | sort -nr | awk '{print $2" "$1}' | head -30000 > $softmax_valid_dir/valid_candidate
+  utils/filter_scp.pl $softmax_valid_dir/valid_candidate $train_dir/utt2spk | utils/shuffle_list.pl | head -$num_heldout_utts > $softmax_valid_dir/utt2spk || exit 1;
+  utils/utt2spk_to_spk2utt.pl $softmax_valid_dir/utt2spk > $softmax_valid_dir/spk2utt
+  cp $data2/voxceleb_train_combined_no_sil/feats.scp $softmax_valid_dir
+  utils/fix_data_dir.sh $softmax_valid_dir
+
+  utils/filter_scp.pl --exclude $softmax_valid_dir/utt2spk $train_dir/utt2spk > $train_dir/utt2spk.new
+  mv $train_dir/utt2spk.new $train_dir/utt2spk
+  utils/fix_data_dir.sh $train_dir
+
+  # In the training, we need an additional file `spklist` to map the speakers to the indices.
+  # This file should be generated manually.
+  awk -v id=0 '{print $1, id++}' $train_dir/spk2utt > $train_dir/spklist
+  awk -v id=0 '{print $1, id++}' $end2end_valid_dir/spk2utt > $end2end_valid_dir/spklist
 fi
 exit 1
 
