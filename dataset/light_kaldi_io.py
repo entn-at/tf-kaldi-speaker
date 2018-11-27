@@ -38,7 +38,7 @@ class FeatureReader():
 
     def get_dim(self):
         with open(os.path.join(self.data, "feats.scp"), "r") as f:
-            dim = self.read(f.readline().strip().split(" ")[1])[0].shape[1]
+            dim = self.read(f.readline().strip().split(" ")[1]).shape[1]
         return dim
 
     def close(self):
@@ -68,19 +68,18 @@ class FeatureReader():
         try:
             binary = self.fd[filename].read(2).decode()
             if binary == '\0B':
-                mat, t1, t2, t3 = self._read_mat_binary(self.fd[filename])
+                mat = self._read_mat_binary(self.fd[filename])
             else:
                 pass
         except:
             raise IOError("Cannot read features from %s" % file_or_fd)
-            pass
 
         if length is not None:
             num_features = mat.shape[0]
             length = num_features if length > num_features else length
             start = random.randint(0, num_features - length) if shuffle else 0
             mat = mat[start:start+length, :]
-        return mat, t1, t2, t3
+        return mat
 
     def _read_mat_binary(self, fd):
         # Data type
@@ -143,28 +142,21 @@ class FeatureReader():
             ans[mask_193_255] = p75 + (p100 - p75) / 63. * (vec[mask_193_255] - 192)
             return ans
 
-        import time
-        ts = time.time()
         # Read global header,
         globmin, globrange, rows, cols = np.frombuffer(fd.read(16), dtype=global_header, count=1)[0]
-        t1 = time.time() - ts
 
-        ts = time.time()
         # The data is structed as [Colheader, ... , Colheader, Data, Data , .... ]
         #                         {           cols           }{     size         }
         col_headers = np.frombuffer(fd.read(cols * 8), dtype=per_col_header, count=cols)
         data = np.reshape(np.frombuffer(fd.read(cols * rows), dtype='uint8', count=cols * rows),
                           newshape=(cols, rows))  # stored as col-major,
-        t2 = time.time() - ts
 
-        ts = time.time()
         mat = np.empty((cols, rows), dtype='float32')
         for i, col_header in enumerate(col_headers):
             col_header_flt = [uint16_to_float(percentile, globmin, globrange) for percentile in col_header]
             mat[i] = uint8_to_float_v2(data[i], *col_header_flt)
-        t3 = time.time() - ts
 
-        return mat.T, t1, t2, t3  # transpose! col-major -> row-major,
+        return mat.T  # transpose! col-major -> row-major,
 
 
 if __name__ == "__main__":

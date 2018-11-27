@@ -13,6 +13,7 @@ class KaldiDataReader():
 
         Args:
             data_dir: The kaldi data directory.
+            num_parallel: The number of threads to read features.
             num_speakers: The number of speakers per batch.
             num_segments: The number of semgents per speaker.
               batch_size = num_speakers * num_segments
@@ -35,8 +36,8 @@ class KaldiDataReader():
         self.spk2features = spk2features
         self.num_parallel_datasets = num_parallel
 
-        # Try to use tensorflow queue to see whether it is faster
-
+        if self.num_parallel_datasets != 1:
+            raise NotImplementedError("When num_parallel_datasets != 1, we got some strange problem with the dataset. Waiting for fix.")
 
     @staticmethod
     def get_speaker_info(data):
@@ -100,9 +101,6 @@ class KaldiDataReader():
         batch_length = random.randint(self.min_len, self.max_len)
         features = np.zeros((self.num_speakers * self.num_segments, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((self.num_speakers * self.num_segments), dtype=np.int32)
-        time1 = 0
-        time2 = 0
-        time3 = 0
         for i, speaker in enumerate(batch_speakers):
             labels[i * self.num_segments:(i + 1) * self.num_segments] = speaker
             feature_list = self.spk2features[speaker]
@@ -111,11 +109,8 @@ class KaldiDataReader():
             # Now the length of the list must be greater than the sample size.
             speaker_features = random.sample(feature_list, self.num_segments)
             for j, feat in enumerate(speaker_features):
-                features[i * self.num_segments + j, :, :], t1, t2, t3 = feature_reader.read(feat, batch_length, shuffle=True)
-                time1 += t1
-                time2 += t2
-                time3 += t3
-        return features, labels, time1, time2, time3
+                features[i * self.num_segments + j, :, :] = feature_reader.read(feat, batch_length, shuffle=True)
+        return features, labels
 
     def random_batch_sequence(self):
         """Randomly load features to form a batch
@@ -125,8 +120,8 @@ class KaldiDataReader():
         """
         feature_reader = FeatureReader(self.data)
         while True:
-            features, labels, t1, t2, t3 = self.random_batch(feature_reader)
-            yield (features, labels, t1, t2, t3)
+            features, labels = self.random_batch(feature_reader)
+            yield (features, labels)
 
     def load_dataset(self):
         """ Load data from Kaldi features and return tf.dataset.
@@ -144,22 +139,17 @@ class KaldiDataReader():
                                                       tf.TensorShape([batch_size])))
         else:
             # Multiple threads loading
-            dataset = tf.data.Dataset.range(self.num_parallel_datasets).interleave(
-                lambda x: tf.data.Dataset.from_generator(self.random_batch_sequence, (tf.float32, tf.int32),
-                                                         (tf.TensorShape([batch_size, None, self.dim]),
-                                                          tf.TensorShape([batch_size]))),
-                cycle_length=self.num_parallel_datasets, block_length=1)
-
+            # It is very stange that the following code doesn't work properly.
+            # I guess the reason may be the py_func influence the performance of parallel_interleave.
+            dataset = tf.data.Dataset.range(self.num_parallel_datasets).apply(
+                tf.contrib.data.parallel_interleave(
+                    lambda x: tf.data.Dataset.from_generator(self.random_batch_sequence, (tf.float32, tf.int32),
+                                                             (tf.TensorShape([batch_size, None, self.dim]),
+                                                              tf.TensorShape([batch_size]))),
+                    cycle_length=self.num_parallel_datasets,
+                    sloppy=False))
         dataset = dataset.prefetch(1)
         return dataset.make_one_shot_iterator().get_next()
-
-    def start_queue(self):
-        """Start a FIFO queue to store data.
-
-        It seems to be a better choice to load data manually and feed the data to the session using feed_dict.
-        The data loading is working in the background and once we need something, just call load_queue()
-        """
-        pass
 
     def simple_load(self):
         pass
@@ -178,43 +168,180 @@ class TFDataReader():
         pass
 
 
+class KaldiDataReaderFIFO():
+    def __init__(self,
+                 data_dir,
+                 coord,
+                 num_speakers=None,
+                 num_segments=None,
+                 min_len=None,
+                 max_len=None,
+                 max_queue_size=32,
+                 wait_time=0.01,
+                 num_parallel=1):
+        # Try to use tensorflow queue to see whether it is faster
+        # Most of the loading time is due to the uncompression process, so it should be useful to have multiple
+        # processings to load the data at the same time.
+        # Change the shape of the input data here with the parameter shapes.
+        self.data = data_dir
+        self.num_speakers = num_speakers
+        self.num_segments = num_segments
+        self.min_len = min_len
+        self.max_len = max_len
+
+        self.dim = FeatureReader(data_dir).get_dim()
+        spk2index, spk2features = self.get_speaker_info(data_dir)
+        self.num_total_speakers = len(spk2features)
+        self.spk2features = spk2features
+        self.num_parallel_datasets = num_parallel
+
+        self.wait_time = wait_time
+        self.max_queue_size = max_queue_size
+
+        batch_size = self.num_speakers * self.num_segments
+        self.queue = tf.PaddingFIFOQueue(self.max_queue_size, (tf.float32, tf.int32),
+                                  shapes=(tf.TensorShape([batch_size, None, self.dim]), tf.TensorShape([batch_size])))
+        self.queue_size = self.queue.size()
+        self.threads = []
+        self.coord = coord
+        self.feature_placeholder = tf.placeholder(dtype=tf.float32, shape=[batch_size, None, self.dim])
+        self.label_placeholder = tf.placeholder(dtype=tf.int32, shape=[batch_size])
+        self.enqueue = self.queue.enqueue([self.feature_placeholder, self.label_placeholder])
+
+    def dequeue(self):
+        output = self.queue.dequeue()
+        return output
+
+    def random_batch(self, feature_reader):
+        """Sample a batch randomly.
+
+        Args:
+            feature_reader: The reader used to load the features from Kaldi
+        :return: A tuple which is (features, labels).
+        """
+        # The function never stop since it just randomly pick speakers to form a batch
+        batch_speakers = random.sample(xrange(self.num_total_speakers), self.num_speakers)
+        # The random length of this batch
+        batch_length = random.randint(self.min_len, self.max_len)
+        features = np.zeros((self.num_speakers * self.num_segments, batch_length, feature_reader.dim), dtype=np.float32)
+        labels = np.zeros((self.num_speakers * self.num_segments), dtype=np.int32)
+        for i, speaker in enumerate(batch_speakers):
+            labels[i * self.num_segments:(i + 1) * self.num_segments] = speaker
+            feature_list = self.spk2features[speaker]
+            if len(feature_list) < self.num_segments:
+                feature_list *= (int(self.num_segments / len(feature_list)) + 1)
+            # Now the length of the list must be greater than the sample size.
+            speaker_features = random.sample(feature_list, self.num_segments)
+            for j, feat in enumerate(speaker_features):
+                features[i * self.num_segments + j, :, :] = feature_reader.read(feat, batch_length, shuffle=True)
+        return features, labels
+
+    def random_batch_sequence(self):
+        """Randomly load features to form a batch
+
+        This function is used in the load routine to feed data to the dataset object
+        It can also be used as a generator to get data directly.
+        """
+        feature_reader = FeatureReader(self.data)
+        while True:
+            features, labels = self.random_batch(feature_reader)
+            yield (features, labels)
+
+    def thread_main(self, sess):
+        stop = False
+        while not stop:
+            iterator = self.random_batch_sequence()
+            for features, labels in iterator:
+                while self.queue_size.eval(session=sess) == self.max_queue_size:
+                    if self.coord.should_stop():
+                        break
+                    time.sleep(self.wait_time)
+                sess.run(self.enqueue, feed_dict={self.feature_placeholder: features,
+                                                  self.label_placeholder: labels})
+                if self.coord.should_stop():
+                    stop = True
+                    print("Enqueue thread receives stop request.")
+                    break
+
+    def start_threads(self, sess, n_threads=1):
+        import threading
+        for _ in range(n_threads):
+            thread = threading.Thread(target=self.thread_main, args=(sess,))
+            thread.daemon = True  # Thread will close when parent quits.
+            thread.start()
+            self.threads.append(thread)
+        return self.threads
+
+    @staticmethod
+    def get_speaker_info(data):
+        """Get speaker information from the data directory
+
+        Args:
+            data: The kaldi data directory
+        :return:
+            spk2index: A dictionary map the speaker name to the index
+            spk2features: A list. Each entry is a list containing features (in text) of this speaker
+        """
+        assert (os.path.isdir(data))
+        spk2index = {}
+        utt2spk = {}
+        spk2features = []
+        with open(os.path.join(data, "spk2utt"), "r") as f:
+            for (index, line) in enumerate(f.readlines()):
+                spk, utts = line.strip().split(" ", 1)
+                spk2index[spk] = index
+                for utt in utts.split(" "):
+                    utt2spk[utt] = index
+                spk2features.append([])
+
+        with open(os.path.join(data, "feats.scp"), "r") as f:
+            for line in f.readlines():
+                (key, rxfile) = line.decode().split(' ')
+                spk2features[utt2spk[key]].append(rxfile)
+
+        return spk2index, spk2features
+
+
 if __name__ == "__main__":
-    # data = "/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/"
-    data = "/scratch/yl695/voxceleb/data/voxceleb_train_combined_no_sil"
-    data_loader = KaldiDataReader(data, num_parallel=8)
+    data = "/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/"
+    # data = "/scratch/yl695/voxceleb/data/voxceleb_train_combined_no_sil"
+    data_loader = KaldiDataReader(data, num_parallel=1)
     data_loader.set_batch(64, 10)
     data_loader.set_length(200, 400)
     num_loads = 10
     import time
 
-    # A very simple network
-    features = tf.placeholder(tf.float32, shape=[None, None, None])
-    features = features + 1
-    labels = tf.placeholder(tf.int32, shape=[None,])
+    # # A very simple network
+    # features = tf.placeholder(tf.float32, shape=[None, None, None])
+    # features = features + 1
+    # labels = tf.placeholder(tf.int32, shape=[None,])
+    #
+    # counter = 0
+    # ts = time.time()
+    # time1 = 0
+    # time2 = 0
+    # time3 = 0
+    # for (features_val, labels_val, t1, t2, t3) in data_loader.random_batch_sequence():
+    #     counter += 1
+    #     time1 += t1
+    #     time2 += t2
+    #     time3 += t3
+    #     if counter == num_loads:
+    #         break
+    # te = time.time()
+    # print("Time: %.4f s, time 1: %.4f s, time 2: %.4f s, time 3: %.4f s" % (te - ts, time1, time2, time3))
 
-    counter = 0
-    ts = time.time()
-    time1 = 0
-    time2 = 0
-    time3 = 0
-    for (features_val, labels_val, t1, t2, t3) in data_loader.random_batch_sequence():
-        counter += 1
-        time1 += t1
-        time2 += t2
-        time3 += t3
-        if counter == num_loads:
-            break
-    te = time.time()
-    print("Time: %.4f s, time 1: %.4f s, time 2: %.4f s, time 3: %.4f s" % (te - ts, time1, time2, time3))
+    with tf.Session() as sess:
+        features, labels = data_loader.load_dataset()
+        sess.run(tf.global_variables_initializer())
+        print("start...")
+        start_time = time.time()
+        for _ in xrange(num_loads):
+            features_val, labels_val = sess.run([features, labels])
+        end_time = time.time()
+        print("Time: %.4f s" % (end_time - start_time))
+        #TODO: try to close the file
 
-    # with tf.Session() as sess:
-        # features, labels = data_loader.load_dataset()
-        # sess.run(tf.global_variables_initializer())
-        # start_time = time.time()
-        # for _ in xrange(num_loads):
-        #     features_val, labels_val = sess.run([features, labels])
-        # end_time = time.time()
-        # print("Time: %.4f s" % (end_time - start_time))
 
     # This result varies on different computers and disks, and may also be affected by the cache.
     # I load the data for a long time before testing to insure the cache is used.
