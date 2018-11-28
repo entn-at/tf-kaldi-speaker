@@ -19,5 +19,5 @@ def softmax(features, labels, num_outputs, params, is_training=None, reuse_varia
                                    activation=None,
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name="output")
-        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=features, name="softmax")
+        loss = tf.losses.sparse_softmax_cross_entropy(labels, features)
     return loss

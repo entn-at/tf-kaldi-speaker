@@ -1,57 +1,39 @@
 import os
 import argparse
-import shutil
 import random
 import sys
 import tensorflow as tf
 import numpy as np
-from utils.utils import Params, load_float
+from misc.utils import ValidLoss, load_lr, load_valid_loss, save_codes_and_config
 from model.trainer import trainer
-from dataset.dataset import KaldiDataReader
+from dataset.data_loader import KaldiDataRandomQueue
+from dataset.light_kaldi_io import FeatureReader
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cont", action="store_true", help="Continue training from an existing model.")
 parser.add_argument("--config", type=str, help="The configuration file.")
 parser.add_argument("train_dir", type=str, help="The data directory of the training set.")
+parser.add_argument("train_spklist", type=str, help="The spklist file maps the TRAINING speakers to the indices.")
 parser.add_argument("valid_dir", type=str, help="The data directory of the validation set.")
+parser.add_argument("valid_spklist", type=str, help="The spklist maps the VALID speakers to the indices.")
 parser.add_argument("model", type=str, help="The output model directory.")
+
 
 if __name__ == '__main__':
     tf.logging.set_verbosity(tf.logging.INFO)
     args = parser.parse_args()
+    params = save_codes_and_config(args)
 
     # The model directory always has a folder named nnet
     model_dir = os.path.join(args.model, "nnet")
-    if args.cont:
-        # If we want to continue the model training, we need to check the existence of the checkpoint.
-        if not os.path.isdir(os.path.join(args.model, "nnet")):
-            sys.exit("To continue training the model, the directory %s must be existed." % (os.path.join(args.model, "nnet")))
-        # Simply load the configuration from the saved model.
-        params = Params(os.path.join(model_dir, "config.json"))
-    else:
-        # If we want to train the model from scratch, the model should not exist.
-        if os.path.isdir(model_dir):
-            sys.exit("The model dir %s exists. Delete it before training" % model_dir)
-        params = Params(args.config)
-        os.makedirs(model_dir)
-        shutil.copyfile(args.config, os.path.join(model_dir, "config.json"))
-
-        # The code may vary in the future, so save the parts which is related to the embedding extraction.
-        # TODO: add code to save the code
 
     # Set the random seed. The random operations may appear in data input, batch forming, etc.
     tf.set_random_seed(params.seed)
     random.seed(params.seed)
     np.random.seed(params.seed)
 
-    # Create dataset before trainer since we need to know the dimension from the dataset.
-    train_dataset = KaldiDataReader(args.train_dir, num_parallel=2,
-                                    num_speakers=params.num_speakers_per_batch,
-                                    num_segments=params.num_segments_per_speaker,
-                                    min_len=params.min_segment_len,
-                                    max_len=params.max_segment_len)
     # The trainer is used to control the training process
-    trainer = trainer(train_dataset.dim, params, args.model)
+    trainer = trainer(params, args.model)
 
     if args.cont:
         # If we continue training, we can figure out how much steps the model has been trained,
@@ -67,19 +49,61 @@ if __name__ == '__main__':
     else:
         start_epoch = 0
 
-    # In this case, we don't need to create the input nodes in each epoch.
-    train_features, train_labels = train_dataset.load()
-
     # The learning rate is determined by the training process. However, if we continue training, the code doesn't know
     # the previous learning rate if it is tuned using the validation set. To solve that, just save the learning rate to
     # an individual file.
     if os.path.isfile(os.path.join(model_dir, "learning_rate")):
-        learning_rate = load_float(os.path.join(model_dir, "learning_rate"))
+        learning_rate = load_lr(os.path.join(model_dir, "learning_rate"))
     else:
         learning_rate = params.learning_rate
 
+    dim = FeatureReader(args.train_dir).get_dim()
+    num_total_train_speakers = KaldiDataRandomQueue(args.train_dir, args.train_spklist).num_total_speakers
+    tf.logging.info("There are %d speakers in the training set and the dim is %d" % (num_total_train_speakers, dim))
+
+    # Load the history valid loss
+    min_valid_loss = ValidLoss()
+    if os.path.isfile(os.path.join(model_dir, "valid_loss")):
+        min_valid_loss = load_valid_loss(os.path.join(model_dir, "valid_loss"))
+
     for epoch in range(start_epoch, params.num_epochs):
-        trainer.build("train", train_features, train_labels, train_dataset.num_total_speakers)
-        trainer.train(learning_rate)
+        trainer.reset()
+        trainer.build("train",
+                      dim=dim,
+                      loss_type=params.loss_func,
+                      num_speakers=num_total_train_speakers)
+
+        # # You can tune the learning rate using the following function.
+        # trainer.train_tune_lr(args.train_dir, args.train_spklist)
+        # sys.exit("Finish tuning.")
+        # # After training, you should plot the loss v.s. the learning rate and pich a learning rate that decrease the
+        # # loss fastest.
+
+        trainer.train(args.train_dir, args.train_spklist, learning_rate)
+
+        trainer.build("valid",
+                      dim=dim,
+                      loss_type=params.loss_func,
+                      num_speakers=num_total_train_speakers)
+        valid_loss, _, _ = trainer.valid(args.valid_dir, args.valid_spklist, batch_type=params.batch_type)
+
+        # Tune the learning rate
+        if valid_loss < min_valid_loss.min_loss:
+            min_valid_loss.min_loss = valid_loss
+            min_valid_loss.min_loss_epoch = epoch
+        else:
+            if epoch - min_valid_loss.min_loss_epoch >= params.reduce_lr_epochs:
+                learning_rate /= 2
+                # Wait for an extra epochs to see the loss reduction.
+                min_valid_loss.min_loss_epoch = epoch - params.reduce_lr_epochs + 1
+                tf.logging.info("After %d epochs without improvement. Reduce the learning rate to %f" % learning_rate)
+
+        # Save the learning rate and loss for each epoch.
+        with open(os.path.join(model_dir, "learning_rate"), "a") as f:
+            f.write("%d %f\n" % (epoch, learning_rate))
+        with open(os.path.join(model_dir, "valid_loss"), "a") as f:
+            f.write("%d %f\n" % (epoch, valid_loss))
+
+    trainer.close()
 
     trainer.close()

@@ -1,10 +1,10 @@
 import tensorflow as tf
-from light_kaldi_io import FeatureReader
 import os
 import random
 import numpy as np
 import time
 from multiprocessing import Process, Queue, Event
+from dataset.light_kaldi_io import FeatureReader
 
 
 class DataOutOfRange(Exception):
@@ -21,7 +21,10 @@ def get_speaker_info(data, spklist):
         data: The kaldi data directory.
         spklist: The spklist file gives the index of each speaker.
     :return:
-        spk2features: A dict. The key is the speaker index and the value is the segments belonging to this speaker
+        spk2features: A dict. The key is the speaker id and the value is the segments belonging to this speaker.
+        features2spk: A dict. The key is the segment and the value is the corresponding speaker id.
+        spk2index: A dict from speaker NAME to speaker ID. This is useful to get the number of speakers. Because
+                   sometimes, the speakers are not all included in the data directory (like in the valid set).
     """
     assert (os.path.isdir(data) and os.path.isfile(spklist))
     spk2index = {}
@@ -47,7 +50,7 @@ def get_speaker_info(data, spklist):
                 spk2features[spk] = []
             spk2features[spk].append(rxfile)
             features2spk[rxfile] = spk
-    return spk2features, features2spk
+    return spk2features, features2spk, spk2index
 
 # TODO: create a base class that does some basic operations on the dataset.
 
@@ -80,9 +83,9 @@ class KaldiDataRandomReader():
 
         # We process the data directory and fetch speaker information
         self.dim = FeatureReader(data_dir).get_dim()
-        self.spk2features, self.features2spk = get_speaker_info(data_dir, spklist)
+        self.spk2features, self.features2spk, spk2index = get_speaker_info(data_dir, spklist)
         self.speakers = list(self.spk2features.keys())
-        self.num_total_speakers = len(self.speakers)
+        self.num_total_speakers = len(list(spk2index.keys()))
         self.num_parallel_datasets = num_parallel
         if self.num_parallel_datasets != 1:
             raise NotImplementedError("When num_parallel_datasets != 1, we got some strange problem with the dataset. Waiting for fix.")
@@ -258,8 +261,10 @@ class KaldiDataRandomQueue():
         self.shuffle = shuffle
 
         # We process the data directory and fetch speaker information.
-        self.spk2features, self.features2spk = get_speaker_info(data_dir, spklist)
-        self.num_total_speakers = len(list(self.spk2features.keys()))
+        self.spk2features, self.features2spk, spk2index = get_speaker_info(data_dir, spklist)
+
+        # The number of speakers should be
+        self.num_total_speakers = len(list(spk2index.keys()))
 
         # The Queue is thread-safe and used to save the features.
         self.queue = Queue(max_qsize)
@@ -311,7 +316,10 @@ class KaldiDataRandomQueue():
         return self.queue.get()
 
     def stop(self):
-        """Stop the threads"""
+        """Stop the threads
+
+        After stop, the processes are terminated and the queue may become unavailable.
+        """
         self.stop_event.set()
         print("Clean the data queue that subprocesses can detect the stop event...")
         while not self.queue.empty():
@@ -388,7 +396,8 @@ class KaldiDataSeqQueue():
         self.shuffle = shuffle
 
         # We process the data directory and fetch speaker information.
-        self.spk2features, self.features2spk = get_speaker_info(data_dir, spklist)
+        self.spk2features, self.features2spk, spk2index = get_speaker_info(data_dir, spklist)
+        self.num_total_speakers = len(list(spk2index.keys()))
 
         # Arrange features in sequence
         self.feature_list = []

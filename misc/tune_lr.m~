@@ -1,0 +1,18 @@
+clear
+
+C = load('learning_rate_tuning');
+
+sma = 1;
+derivatives = loss(1+sma:end) - loss(1:end-sma);
+semilogx(lr, 
+
+derivatives = [0] * (sma + 1)
+    for i in range(1 + sma, len(learn.sched.lrs)):
+        derivative = (learn.sched.losses[i] - learn.sched.losses[i - sma]) / sma
+        derivatives.append(derivative)
+        
+    plt.ylabel("d/loss")
+    plt.xlabel("learning rate (log scale)")
+    plt.plot(learn.sched.lrs[n_skip:], derivatives[n_skip:])
+    plt.xscale('log')
+    plt.ylim(y_lim)

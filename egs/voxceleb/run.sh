@@ -23,7 +23,7 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=6
+stage=7
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
@@ -210,12 +210,30 @@ if [ $stage -le 6 ]; then
   awk -v id=0 '{print $1, id++}' $train_dir/spk2utt > $train_dir/spklist
   awk -v id=0 '{print $1, id++}' $end2end_valid_dir/spk2utt > $end2end_valid_dir/spklist
 fi
-exit 1
 
-# Stages 6 through 8 are handled in run_xvector.sh
-local/nnet3/xvector/run_xvector.sh --stage $stage --train-stage -1 \
-  --data data/train_combined_no_sil --nnet-dir $nnet_dir \
-  --egs-dir $nnet_dir/egs
+if [ $stage -le 7 ]; then
+## Training a softmax network
+#nnetdir=$exp/xvector_nnet_tdnn_softmax
+#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+nnetdir=$exp/xvector_nnet_tdnn_softmax_largebatch
+./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_largebatch.json \
+    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+    $nnetdir
+
+# Training a GE2E network
+
+fi
+
+if [ $stage -le 8 ]; then
+  # Extract the embeddings
+  ./run_extract_embedding.sh --cmd "$cuda_cmd"
+fi
+
 
 if [ $stage -le 9 ]; then
   # Extract x-vectors for centering, LDA, and PLDA training.

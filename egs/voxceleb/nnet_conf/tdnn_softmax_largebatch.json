@@ -29,7 +29,7 @@
 
   "num_parallel_datasets": 16,
   "max_queue_size": 10,
-  "num_speakers_per_batch": 128,
+  "num_speakers_per_batch": 256,
   "num_segments_per_speaker": 1,
   "min_segment_len": 200,
   "max_segment_len": 400

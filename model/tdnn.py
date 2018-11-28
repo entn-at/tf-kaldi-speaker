@@ -2,6 +2,7 @@ import tensorflow as tf
 from model.pooling import statistics_pooling
 from collections import OrderedDict
 
+
 def tdnn(features, params, is_training=None, reuse_variables=None):
     """Build a TDNN network.
 
@@ -138,13 +139,16 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name='tdnn7_dense')
         endpoints['tdnn7_dense'] = features
-        features = tf.layers.batch_normalization(features,
-                                                 momentum=params.batchnorm_momentum,
-                                                 training=is_training,
-                                                 name="tdnn7_bn")
-        endpoints["tdnn7_bn"] = features
-        features = tf.nn.relu(features, name='tdnn7_relu')
-        endpoints["tdnn7_relu"] = features
+
+        if not params.last_layer_linear:
+            # If the last layer is linear, no further activation is needed.
+            features = tf.layers.batch_normalization(features,
+                                                     momentum=params.batchnorm_momentum,
+                                                     training=is_training,
+                                                     name="tdnn7_bn")
+            endpoints["tdnn7_bn"] = features
+            features = tf.nn.relu(features, name='tdnn7_relu')
+            endpoints["tdnn7_relu"] = features
 
     return features, endpoints
 
@@ -156,7 +160,7 @@ if __name__ == "__main__":
     num_dim = 10
     features = tf.placeholder(tf.float32, shape=[None, None, num_dim], name="features")
     labels = tf.placeholder(tf.int32, shape=[None], name="labels")
-    from utils.utils import ParamsPlain
+    from misc.utils import ParamsPlain
     params = ParamsPlain()
     params.dict["weight_l2_regularizer"] = 1e-5
     params.dict["batchnorm_momentum"] = 0.999
