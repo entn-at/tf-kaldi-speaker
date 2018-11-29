@@ -9,7 +9,7 @@ from model.loss import softmax
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 
 
-class trainer():
+class Trainer():
     """Handle the training, validation and prediction"""
 
     def __init__(self, params, model_dir):
@@ -103,6 +103,11 @@ class trainer():
         self.is_built = False
         # After reset the graph, it is important to reset the seed.
         tf.set_random_seed(self.params.seed)
+
+        # Reset some variables. The previous ones have become invalid due to the graph reset.
+        self.saver = None
+        self.summary_writer = None
+        self.valid_summary_writer = None
 
     def close(self):
         """Close the session we opened."""
@@ -412,8 +417,6 @@ class trainer():
         """
         # Initialization will reset all the variables in the graph
         # The local variables are also need to be initialized for metrics function
-        import pdb
-        pdb.set_trace()
         self.sess.run(tf.global_variables_initializer())
         self.sess.run(tf.local_variables_initializer())
         assert batch_type == "softmax" or batch_type == "end2end", "The batch_type can be softmax or end2end"

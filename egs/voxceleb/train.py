@@ -5,7 +5,7 @@ import sys
 import tensorflow as tf
 import numpy as np
 from misc.utils import ValidLoss, load_lr, load_valid_loss, save_codes_and_config
-from model.trainer import trainer
+from model.trainer import Trainer
 from dataset.data_loader import KaldiDataRandomQueue
 from dataset.light_kaldi_io import FeatureReader
 
@@ -31,9 +31,6 @@ if __name__ == '__main__':
     tf.set_random_seed(params.seed)
     random.seed(params.seed)
     np.random.seed(params.seed)
-
-    # The trainer is used to control the training process
-    trainer = trainer(params, args.model)
 
     if args.cont:
         # If we continue training, we can figure out how much steps the model has been trained,
@@ -66,25 +63,24 @@ if __name__ == '__main__':
     if os.path.isfile(os.path.join(model_dir, "valid_loss")):
         min_valid_loss = load_valid_loss(os.path.join(model_dir, "valid_loss"))
 
+    # The trainer is used to control the training process
+    trainer = Trainer(params, args.model)
+    trainer.build("train",
+                  dim=dim,
+                  loss_type=params.loss_func,
+                  num_speakers=num_total_train_speakers)
+    trainer.build("valid",
+                  dim=dim,
+                  loss_type=params.loss_func,
+                  num_speakers=num_total_train_speakers)
+    # # You can tune the learning rate using the following function.
+    # # After training, you should plot the loss v.s. the learning rate and pich a learning rate that decrease the
+    # # loss fastest.
+    # trainer.train_tune_lr(args.train_dir, args.train_spklist)
+    # sys.exit("Finish tuning.")
+
     for epoch in range(start_epoch, params.num_epochs):
-        trainer.reset()
-        trainer.build("train",
-                      dim=dim,
-                      loss_type=params.loss_func,
-                      num_speakers=num_total_train_speakers)
-
-        # # You can tune the learning rate using the following function.
-        # trainer.train_tune_lr(args.train_dir, args.train_spklist)
-        # sys.exit("Finish tuning.")
-        # # After training, you should plot the loss v.s. the learning rate and pich a learning rate that decrease the
-        # # loss fastest.
-
         trainer.train(args.train_dir, args.train_spklist, learning_rate)
-
-        trainer.build("valid",
-                      dim=dim,
-                      loss_type=params.loss_func,
-                      num_speakers=num_total_train_speakers)
         valid_loss, _, _ = trainer.valid(args.valid_dir, args.valid_spklist, batch_type=params.batch_type)
 
         # Tune the learning rate
@@ -96,7 +92,7 @@ if __name__ == '__main__':
                 learning_rate /= 2
                 # Wait for an extra epochs to see the loss reduction.
                 min_valid_loss.min_loss_epoch = epoch - params.reduce_lr_epochs + 1
-                tf.logging.info("After %d epochs without improvement. Reduce the learning rate to %f" % learning_rate)
+                tf.logging.info("After %d epochs without improvement. Reduce the learning rate to %f" % (min_valid_loss.min_loss_epoch, learning_rate))
 
         # Save the learning rate and loss for each epoch.
         with open(os.path.join(model_dir, "learning_rate"), "a") as f:
@@ -104,6 +100,5 @@ if __name__ == '__main__':
         with open(os.path.join(model_dir, "valid_loss"), "a") as f:
             f.write("%d %f\n" % (epoch, valid_loss))
 
-    trainer.close()
-
+    # Close the session before we exit.
     trainer.close()

@@ -1,5 +1,6 @@
 {
   "TODO": "We may add some hierarchical structure to make the json more readable.",
+  "tunable": "learning_rate, momentum, batch_size, weight_l2_regularizer and clip_gradient",
 
   "seed": 0,
   "network_type": "tdnn",
@@ -9,7 +10,7 @@
   "pooling_type": "statistics_pooling",
   "embedding_node": "tdnn6_dense",
 
-  "learning_rate": 0.1,
+  "learning_rate": 0.01,
   "momentum": 0.9,
   "use_nesterov": false,
   "clip_gradient": false,
@@ -19,7 +20,7 @@
   "batchnorm_momentum": 0.99,
 
   "num_epochs": 100,
-  "num_steps_per_epoch": 15000,
+  "num_steps_per_epoch": 10,
   "reduce_lr_epochs": 2,
   "show_training_progress": 100,
   "keep_checkpoint_max": 100,
@@ -29,7 +30,7 @@
 
   "num_parallel_datasets": 16,
   "max_queue_size": 10,
-  "num_speakers_per_batch": 128,
+  "num_speakers_per_batch": 64,
   "num_segments_per_speaker": 1,
   "min_segment_len": 200,
   "max_segment_len": 400

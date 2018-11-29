@@ -25,6 +25,10 @@ export PYTHONPATH=`pwd`/../../:$PYTHONPATH
 
 mkdir -p $nnetdir/log
 
+if [ $continue_training == 'true' ]; then
+  cmdopts="-c"
+fi
+
 $cmd $nnetdir/log/train_nnet.log \
-    python train.py --config $config $train $train_spklist $valid $valid_spklist $nnetdir
+    python train.py $cmdopts --config $config $train $train_spklist $valid $valid_spklist $nnetdir
 

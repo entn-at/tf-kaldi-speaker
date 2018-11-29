@@ -71,6 +71,7 @@ def save_codes_and_config(args):
         if not os.path.isdir(os.path.join(args.model, "nnet")) or not os.path.isdir(os.path.join(args.model, "codes")):
             sys.exit("To continue training the model, nnet and codes must be existed in %s." % args.model)
         # Simply load the configuration from the saved model.
+        tf.logging.info("Continue training from %s." % args.model)
         params = Params(os.path.join(args.model, "nnet/config.json"))
     else:
         # Save the codes in the model directory so that it is more convenient to extract the embeddings.
@@ -82,9 +83,9 @@ def save_codes_and_config(args):
             if os.path.isdir(os.path.join(args.model, ".backup")):
                 tf.logging.warn("The dir %s exisits. Delete it and continue." % os.path.join(args.model, ".backup"))
                 shutil.rmtree(os.path.join(args.model, ".backup"))
-            os.makedirs(os.path.join(args.model, ".backup/nnet"))
-            shutil.move(os.path.join(args.model, "codes"), os.path.join(args.model, ".backup"))
-            shutil.move(os.path.join(args.model, "nnet/config.json"), os.path.join(args.model, ".backup/nnet"))
+            os.makedirs(os.path.join(args.model, ".backup"))
+            shutil.move(os.path.join(args.model, "codes"), os.path.join(args.model, ".backup/"))
+            shutil.move(os.path.join(args.model, "nnet"), os.path.join(args.model, ".backup/"))
 
         # `model/codes` is used to save the codes and `model/nnet` is used to save the model and configuration
         os.makedirs(os.path.join(args.model, "codes"))
@@ -94,6 +95,7 @@ def save_codes_and_config(args):
         if not os.path.isdir(os.path.join(args.model, "nnet")):
             os.makedirs(os.path.join(args.model, "nnet"))
         shutil.copyfile(args.config, os.path.join(args.model, "nnet", "config.json"))
+        tf.logging.info("Train the model from scratch.")
         params = Params(args.config)
     return params
 
