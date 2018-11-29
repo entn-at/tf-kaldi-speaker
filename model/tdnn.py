@@ -93,9 +93,13 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
         features = tf.nn.relu(features, name='tdnn4_relu')
         endpoints["tdnn4_relu"] = features
 
-        # Layer 5: [b, l, 1500]
+        # Layer 5: [b, l, x]
+        if "num_nodes_pooling_layer" not in params.dict:
+            # The default number of nodes before pooling
+            params.dict["num_nodes_pooling_layer"] = 1500
+
         features = tf.layers.dense(features,
-                                   1500,
+                                   params.num_nodes_pooling_layer,
                                    activation=None,
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name="tdnn5_dense")
@@ -132,9 +136,12 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
         features = tf.nn.relu(features, name='tdnn6_relu')
         endpoints["tdnn6_relu"] = features
 
-        # Layer 7: [b, 512]
+        # Layer 7: [b, x]
+        if "num_nodes_last_layer" not in params.dict:
+            # The default number of nodes in the last layer
+            params.dict["num_nodes_last_layer"] = 512
         features = tf.layers.dense(features,
-                                   512,
+                                   params.num_nodes_last_layer,
                                    activation=None,
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name='tdnn7_dense')
