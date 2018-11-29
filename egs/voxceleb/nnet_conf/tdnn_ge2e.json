@@ -1,0 +1,40 @@
+{
+  "TODO": "We may add some hierarchical structure to make the json more readable.",
+  "tunable": "learning_rate, momentum, batch_size, weight_l2_regularizer and clip_gradient",
+
+  "seed": 0,
+  "network_type": "tdnn",
+  "last_layer_linear": true,
+  "loss_func": "ge2e",
+  "batch_type": "end2end",
+  "pooling_type": "statistics_pooling",
+  "embedding_node": "tdnn7_dense",
+  "init_end2end_w": 10,
+  "init_end2end_b": -5,
+  "ge2e_loss_type": "softmax",
+
+  "learning_rate": 0.01,
+  "momentum": 0.9,
+  "use_nesterov": false,
+  "clip_gradient": true,
+  "clip_gradient_norm": 3,
+
+  "weight_l2_regularizer": 1e-4,
+  "batchnorm_momentum": 0.99,
+
+  "num_epochs": 100,
+  "num_steps_per_epoch": 10000,
+  "reduce_lr_epochs": 2,
+  "show_training_progress": 100,
+  "keep_checkpoint_max": 100,
+  "save_summary_steps": 500,
+  "save_checkpoints_steps": 10000,
+  "valid_max_iterations": 1000,
+
+  "num_parallel_datasets": 16,
+  "max_queue_size": 10,
+  "num_speakers_per_batch": 64,
+  "num_segments_per_speaker": 10,
+  "min_segment_len": 200,
+  "max_segment_len": 400
+}

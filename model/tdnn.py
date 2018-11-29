@@ -157,14 +157,17 @@ if __name__ == "__main__":
     num_labels = 10
     num_data = 100
     num_length = 100
-    num_dim = 10
+    num_dim = 100
     features = tf.placeholder(tf.float32, shape=[None, None, num_dim], name="features")
     labels = tf.placeholder(tf.int32, shape=[None], name="labels")
+    embeddings = tf.placeholder(tf.float32, shape=[None, num_dim], name="embeddings")
+
     from misc.utils import ParamsPlain
     params = ParamsPlain()
     params.dict["weight_l2_regularizer"] = 1e-5
     params.dict["batchnorm_momentum"] = 0.999
     params.dict["pooling_type"] = "statistics_pooling"
+    params.dict["last_layer_linear"] = False
 
     # tdnn + softmax
     outputs, endpoints = tdnn(features, params, is_training=True, reuse_variables=False)
@@ -190,3 +193,33 @@ if __name__ == "__main__":
         std = np.std(before_pooling, axis=1)
         p = np.concatenate((m, std), axis=1)
         assert np.allclose(after_pooling, p)
+
+    # generalized end2end loss
+    from model.loss import ge2e
+    num_speakers = 64
+    num_segments_per_speaker = 10
+    num_data = num_speakers * num_segments_per_speaker
+    params.dict["num_speakers_per_batch"] = num_speakers
+    params.dict["num_segments_per_speaker"] = num_segments_per_speaker
+    params.dict["init_end2end_w"] = 10
+    params.dict["init_end2end_b"] = -5
+    reuse_variables = False
+    for ge2e_type in ["softmax", "contrastive"]:
+        params.dict["ge2e_loss_type"] = ge2e_type
+        loss = ge2e(embeddings, labels, 10, params, is_training=True, reuse_variables=reuse_variables)
+        reuse_variables = True
+        grads = tf.gradients(loss, embeddings)
+        embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+        labels_val = np.zeros(num_data, dtype=np.int32)
+        for i in range(num_speakers):
+            labels_val[i*num_segments_per_speaker:(i+1)*num_segments_per_speaker] = i
+
+        from model.test_utils import compute_ge2e_loss
+        loss_np = compute_ge2e_loss(embeddings_val, labels_val, params.init_end2end_w, params.init_end2end_b, params.ge2e_loss_type)
+
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            loss_val, grad_val = sess.run([loss, grads], feed_dict={embeddings: embeddings_val,
+                                                                    labels: labels_val})
+            assert not np.any(np.isnan(grad_val)), "Gradient should not be nan"
+            assert np.allclose(loss_val, loss_np)

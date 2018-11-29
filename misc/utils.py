@@ -128,6 +128,7 @@ def shape_list(x):
 
 
 def load_lr(filename):
+    """Load learning rate from a saved file"""
     val = 0
     with open(filename, "r") as f:
         for line in f.readlines():
@@ -137,6 +138,7 @@ def load_lr(filename):
 
 
 def load_valid_loss(filename):
+    """Load valid loss from a saved file"""
     min_loss = ValidLoss()
     with open(filename, "r") as f:
         for line in f.readlines():
@@ -147,3 +149,8 @@ def load_valid_loss(filename):
                 min_loss.min_loss = loss
                 min_loss.min_loss_epoch = epoch
     return min_loss
+
+
+def l2_normalize(x):
+    """Normalize the last dimension vector of the input matrix"""
+    return x / tf.sqrt(tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True) + 1e-16)

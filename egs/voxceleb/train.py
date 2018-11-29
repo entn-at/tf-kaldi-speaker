@@ -73,11 +73,11 @@ if __name__ == '__main__':
                   dim=dim,
                   loss_type=params.loss_func,
                   num_speakers=num_total_train_speakers)
-    # # You can tune the learning rate using the following function.
-    # # After training, you should plot the loss v.s. the learning rate and pich a learning rate that decrease the
-    # # loss fastest.
-    # trainer.train_tune_lr(args.train_dir, args.train_spklist)
-    # sys.exit("Finish tuning.")
+    # You can tune the learning rate using the following function.
+    # After training, you should plot the loss v.s. the learning rate and pich a learning rate that decrease the
+    # loss fastest.
+    trainer.train_tune_lr(args.train_dir, args.train_spklist)
+    sys.exit("Finish tuning.")
 
     for epoch in range(start_epoch, params.num_epochs):
         trainer.train(args.train_dir, args.train_spklist, learning_rate)
@@ -92,7 +92,7 @@ if __name__ == '__main__':
                 learning_rate /= 2
                 # Wait for an extra epochs to see the loss reduction.
                 min_valid_loss.min_loss_epoch = epoch - params.reduce_lr_epochs + 1
-                tf.logging.info("After %d epochs without improvement. Reduce the learning rate to %f" % (min_valid_loss.min_loss_epoch, learning_rate))
+                tf.logging.info("After epoch %d, no improvement. Reduce the learning rate to %f" % (min_valid_loss.min_loss_epoch, learning_rate))
 
         # Save the learning rate and loss for each epoch.
         with open(os.path.join(model_dir, "learning_rate"), "a") as f:

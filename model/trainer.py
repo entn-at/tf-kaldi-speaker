@@ -5,7 +5,7 @@ import sys
 import time
 import numpy as np
 from model.tdnn import tdnn
-from model.loss import softmax
+from model.loss import softmax, ge2e
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 
 
@@ -179,6 +179,8 @@ class Trainer():
         self.loss_type = loss_type
         if loss_type == "softmax":
             self.loss_network = softmax
+        if loss_type == "ge2e":
+            self.loss_network = ge2e
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 

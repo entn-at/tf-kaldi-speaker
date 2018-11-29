@@ -213,17 +213,23 @@ fi
 
 if [ $stage -le 7 ]; then
 # Training a softmax network
-nnetdir=$exp/xvector_nnet_tdnn_softmax
-./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax.json \
-    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
-    $nnetdir
-
-#nnetdir=$exp/xvector_nnet_tdnn_softmax_largebatch
-#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training true nnet_conf/tdnn_softmax_largebatch.json \
+#nnetdir=$exp/xvector_nnet_tdnn_softmax_1
+#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_softmax_2
+#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_2.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+nnetdir=$exp/xvector_nnet_tdnn_softmax_3
+./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_3.json \
+    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+    $nnetdir
 
 # Training a GE2E network
 
