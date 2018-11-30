@@ -78,6 +78,7 @@ class Trainer():
         # This is an indicator to tell whether the model is built. After building the model, we can only use `reuse`
         # to refer to different part of the model.
         self.is_built = False
+        self.is_loaded = False
 
         # In train, valid and prediction modes, we need the inputs. If tf.data is used, the input can be a node in
         # the graph. However, we may also use feed_dict mechanism to feed data, in which case the placeholder is palced
@@ -101,6 +102,7 @@ class Trainer():
         self.sess = tf.Session(config=self.sess_config)
         # After the graph is reset, the flag should be set
         self.is_built = False
+        self.is_loaded = False
         # After reset the graph, it is important to reset the seed.
         tf.set_random_seed(self.params.seed)
 
@@ -131,6 +133,7 @@ class Trainer():
             tf.logging.info("Succeed to load checkpoint {}".format(ckpt_name))
         else:
             sys.exit("Failed to find a checkpoint in {}".format(self.model))
+        self.is_loaded = True
         return step
 
     def save(self, step, lr):
@@ -179,7 +182,7 @@ class Trainer():
         self.loss_type = loss_type
         if loss_type == "softmax":
             self.loss_network = softmax
-        if loss_type == "ge2e":
+        elif loss_type == "ge2e":
             self.loss_network = ge2e
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
@@ -216,8 +219,8 @@ class Trainer():
 
         # SGD with momentum
         # It is also possible to use other optimizers, e.g. Adam.
-        opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
-        # opt = tf.train.GradientDescentOptimizer(self.learning_rate, name="optimizer")
+        # opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
+        opt = tf.train.GradientDescentOptimizer(self.learning_rate, name="optimizer")
 
         # Use name_space here. Create multiple name_spaces if multi-gpus
         with tf.name_scope("train") as scope:
@@ -226,9 +229,14 @@ class Trainer():
             regularization_loss = tf.losses.get_regularization_loss()
             total_loss = loss + regularization_loss
 
-            tf.summary.scalar("loss", loss)
-            tf.summary.scalar("total_loss", total_loss)
-            tf.summary.scalar("learning_rate", self.learning_rate)
+            # train_summary contains all the summeries we want to inspect.
+            # Get the summaries define in the network and loss function.
+            # The summeries in the network and loss function are about the network variables.
+            self.train_summary = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+
+            self.train_summary.append(tf.summary.scalar("loss", loss))
+            self.train_summary.append(tf.summary.scalar("total_loss", total_loss))
+            self.train_summary.append(tf.summary.scalar("learning_rate", self.learning_rate))
 
             # The gradient ops is inside the scope to support multi-gpus
             batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
@@ -236,10 +244,6 @@ class Trainer():
 
             # Once the model has been built (even for a tower), we set the flag
             self.is_built = True
-
-            # TF 1.4 does not support scope in merge_all
-            # self.train_summary = tf.summary.merge_all(scope=scope)
-            self.train_summary = tf.summary.merge_all()
 
         if self.params.clip_gradient:
             grads, vars = zip(*grads)  # compute gradients of variables with respect to loss
@@ -254,6 +258,16 @@ class Trainer():
                     assert("w" in var.name or "b" in var.name)
 
             grads = zip(grads_clip, vars)
+
+        # The values and gradients are added to summeries
+        for grad, var in grads:
+            if grad is not None:
+                self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+
+        for var in tf.trainable_variables():
+            self.train_summary.append(tf.summary.histogram(var.op.name, var))
+
+        self.train_summary = tf.summary.merge(self.train_summary)
 
         with tf.control_dependencies(batchnorm_update_ops):
             self.train_op = opt.apply_gradients(grads)
@@ -341,7 +355,9 @@ class Trainer():
         return
 
     def train_tune_lr(self, data, spklist):
-        """Tune the learning rate
+        """Tune the learning rate.
+
+        I think it is better to use sgd to test the learning rate.
 
         According to: https://www.kdnuggets.com/2017/11/estimating-optimal-learning-rate-deep-neural-network.html
 
@@ -363,16 +379,24 @@ class Trainer():
         data_loader.start()
 
         # The learning rate normally varies from 1e-4 to 1
+        # Some common values:
+        # 1. factor = 1.15
+        #    tune_period = 100
+        #    tune_times = 100
+        #
+        # 2. factor = 1.25
+        #    tune_period = 100
+        #    tune_times = 50
         init_learning_rate = 1e-4
-        factor = 1.15
+        factor = 1.25
         tune_period = 100
-        tune_times = 100
+        tune_times = 50
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
         for step in xrange(tune_period * tune_times):
             lr = init_learning_rate * (factor ** (step / tune_period))
             try:
-                if step % tune_times == 0:
+                if step % tune_period == 0:
                     train_ops = [self.train_ops, self.train_op]
                     start_time = time.time()
                     features, labels = data_loader.fetch()
@@ -516,10 +540,11 @@ class Trainer():
 
         :return: A numpy array which is the embeddings
         """
-        if os.path.isfile(os.path.join(self.model, "checkpoint")):
-            self.load()
-        else:
-            sys.exit("Cannot find model in %s" % self.model)
+        if not self.is_loaded:
+            if os.path.isfile(os.path.join(self.model, "checkpoint")):
+                self.load()
+            else:
+                sys.exit("Cannot find model in %s" % self.model)
         rank = len(features.shape)
         assert(rank == 2 or rank == 3)
         # Expand the feature if the rank is 2

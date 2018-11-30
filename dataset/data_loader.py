@@ -4,7 +4,7 @@ import random
 import numpy as np
 import time
 from multiprocessing import Process, Queue, Event
-from dataset.light_kaldi_io import FeatureReader
+from dataset.kaldi_io import FeatureReader
 
 
 class DataOutOfRange(Exception):

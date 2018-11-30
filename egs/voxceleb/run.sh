@@ -211,82 +211,107 @@ if [ $stage -le 6 ]; then
   awk -v id=0 '{print $1, id++}' $end2end_valid_dir/spk2utt > $end2end_valid_dir/spklist
 fi
 
-if [ $stage -le 7 ]; then
-# Training a softmax network
+#if [ $stage -le 7 ]; then
+## Training a softmax network
 #nnetdir=$exp/xvector_nnet_tdnn_softmax_1
-#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1.json \
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
 #nnetdir=$exp/xvector_nnet_tdnn_softmax_2
-#./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_2.json \
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_2.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_3
-./run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_3.json \
-    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
-    $nnetdir
+#nnetdir=$exp/xvector_nnet_tdnn_softmax_3
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_3.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
 
-# Training a GE2E network
+#nnetdir=$exp/xvector_nnet_tdnn_softmax_4
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_4.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
 
-fi
-exit 1
+## Training a GE2E network
+#nnetdir=$exp/xvector_nnet_ge2e_softmax
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_ge2e_softmax_2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e_2.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $nnetdir
+#
+#fi
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1
+
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  ./run_extract_embedding.sh --cmd "$cuda_cmd"
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 100 --use-gpu false --checkpoint -1 --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data2/voxceleb_train $nnetdir/xvectors_voxceleb_train
+
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 40 --use-gpu false --checkpoint -1 --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data2/voxceleb_test $nnetdir/xvectors_voxceleb_test
 fi
 
-
 if [ $stage -le 9 ]; then
-  # Extract x-vectors for centering, LDA, and PLDA training.
-  sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 80 \
-    $nnet_dir data/train \
-    $nnet_dir/xvectors_train
+  # Cosine similarity
+  cat $voxceleb1_trials | awk '{print $1, $2}' | \
+    ivector-compute-dot-products - \
+      'ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |' \
+      'ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |' \
+      $nnetdir/scores/scores_voxceleb_test.cos
 
-  # Extract x-vectors used in the evaluation.
-  sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 40 \
-    $nnet_dir data/voxceleb1_test \
-    $nnet_dir/xvectors_voxceleb1_test
+  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos) 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
+  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
+  echo "EER: $eer%"
+  echo "minDCF(p-target=0.01): $mindcf1"
+  echo "minDCF(p-target=0.001): $mindcf2"
 fi
 
 if [ $stage -le 10 ]; then
   # Compute the mean vector for centering the evaluation xvectors.
-  $train_cmd $nnet_dir/xvectors_train/log/compute_mean.log \
-    ivector-mean scp:$nnet_dir/xvectors_train/xvector.scp \
-    $nnet_dir/xvectors_train/mean.vec || exit 1;
+  $train_cmd $nnetdir/xvectors_voxceleb_train/log/compute_mean.log \
+    ivector-mean scp:$nnetdir/xvectors_voxceleb_train/xvector.scp \
+    $nnetdir/xvectors_voxceleb_train/mean.vec || exit 1;
 
   # This script uses LDA to decrease the dimensionality prior to PLDA.
   lda_dim=200
-  $train_cmd $nnet_dir/xvectors_train/log/lda.log \
+  $train_cmd $nnetdir/xvectors_voxceleb_train/log/lda.log \
     ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
-    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- |" \
-    ark:data/train/utt2spk $nnet_dir/xvectors_train/transform.mat || exit 1;
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_voxceleb_train/xvector.scp ark:- |" \
+    ark:$data2/voxceleb_train/utt2spk $nnetdir/xvectors_voxceleb_train/transform.mat || exit 1;
 
   # Train the PLDA model.
-  $train_cmd $nnet_dir/xvectors_train/log/plda.log \
-    ivector-compute-plda ark:data/train/spk2utt \
-    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
-    $nnet_dir/xvectors_train/plda || exit 1;
+  $train_cmd $nnetdir/xvectors_voxceleb_train/log/plda.log \
+    ivector-compute-plda ark:$data2/voxceleb_train/spk2utt \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_voxceleb_train/xvector.scp ark:- | transform-vec $nnetdir/xvectors_voxceleb_train/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
+    $nnetdir/xvectors_voxceleb_train/plda || exit 1;
 fi
 
 if [ $stage -le 11 ]; then
-  $train_cmd exp/scores/log/voxceleb1_test_scoring.log \
+  $train_cmd $nnetdir/scores/log/voxceleb_test_scoring.log \
     ivector-plda-scoring --normalize-length=true \
-    "ivector-copy-plda --smoothing=0.0 $nnet_dir/xvectors_train/plda - |" \
-    "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" exp/scores_voxceleb1_test || exit 1;
-fi
+    "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_voxceleb_train/plda - |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_voxceleb_train/mean.vec scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- | transform-vec $nnetdir/xvectors_voxceleb_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_voxceleb_train/mean.vec scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- | transform-vec $nnetdir/xvectors_voxceleb_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" $nnetdir/scores/scores_voxceleb_test.plda || exit 1;
 
-if [ $stage -le 12 ]; then
-  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials exp/scores_voxceleb1_test) 2> /dev/null`
-  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
-  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
+  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda) 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
+  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
   echo "EER: $eer%"
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"

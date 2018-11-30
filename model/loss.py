@@ -3,6 +3,9 @@ import numpy as np
 from misc.utils import shape_list, l2_normalize
 
 
+# TODO: add triplet loss, angular-softmax, additive margin softmax, additive angular margin softmax
+
+
 def softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
     """Vanilla softmax loss.
 
@@ -49,6 +52,9 @@ def ge2e(features, labels, num_outputs, params, is_training=None, reuse_variable
         # There are 2 variables in the End2End loss
         w = tf.get_variable("w", initializer=np.array([float(params.init_end2end_w)], dtype=np.float32), dtype=tf.float32)
         b = tf.get_variable("b", initializer=np.array([float(params.init_end2end_b)], dtype=np.float32), dtype=tf.float32)
+
+        tf.summary.scalar("w", w)
+        tf.summary.scalar("b", b)
 
         # The inputs contain N speakers and M segments per speaker.
         num_features = shape_list(features)[0]

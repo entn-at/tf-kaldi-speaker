@@ -17,7 +17,7 @@
   "embedding_node": "tdnn7_dense",
 
   "learning_rate": 0.01,
-  "momentum": 0.9,
+  "momentum": 0.5,
   "use_nesterov": false,
   "clip_gradient": true,
   "clip_gradient_norm": 3,

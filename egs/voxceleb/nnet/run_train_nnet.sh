@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cmd=run.pl
+cmd="run.pl"
 continue_training=false
 
 echo "$0 $@"
@@ -9,7 +9,9 @@ if [ -f path.sh ]; then . ./path.sh; fi
 . parse_options.sh || exit 1;
 
 if [ $# != 6 ]; then
-  echo "Usage: $0 [options] <config> <train_dir> <train_spklist> <valid_dir> <valid_spklist> <nnet>"
+  echo "Usage: $0 [options] <config> <train-dir> <train-spklist> <valid-dir> <valid-spklist> <nnet>"
+  echo "Options:"
+  echo "  --continue-training <false>"
   exit 100
 fi
 
@@ -30,5 +32,5 @@ if [ $continue_training == 'true' ]; then
 fi
 
 $cmd $nnetdir/log/train_nnet.log \
-    python train.py $cmdopts --config $config $train $train_spklist $valid $valid_spklist $nnetdir
+    python nnet/lib/train.py $cmdopts --config $config $train $train_spklist $valid $valid_spklist $nnetdir
 
