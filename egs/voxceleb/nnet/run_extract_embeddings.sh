@@ -49,7 +49,13 @@ feat="ark:apply-cmvn-sliding --norm-vars=false --center=true --cmn-window=300 sc
 if [ $stage -le 0 ]; then
   echo "$0: extracting xvectors from nnet"
   # Set the checkpoint.
+  source activate $env
+  unset PYTHONPATH
+  export PYTHONPATH=`pwd`/../../:$PYTHONPATH
+  export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
   python nnet/lib/make_checkpoint.py --checkpoint $checkpoint "$nnetdir"
+  source deactivate
+
   if $use_gpu; then
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
       nnet/wrap/extract_wrapper.sh --use-env false --gpuid JOB --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \

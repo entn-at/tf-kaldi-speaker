@@ -433,11 +433,8 @@ class Trainer():
                         If the batch is `softmax-like`, each sample are from different speakers;
                         if the batch is `end2end-like`, the samples are from N speakers with M segments per speaker.
             output_embeddings: Set True to output the corresponding embeddings and labels of the valid set.
-                               If output_embeddings, the valid loss should be computed outside the function,
-                               so the loss computed here is invalid (should not be used) and the inputs are not
-                               shuffled. If not output_embeddings, we use the pre-defined valid loss, and the inputs
-                               are shuffled.
-                               Note: if output_embeddings, batch_type can only be "softmax".
+                               If output_embeddings, an additional valid metric (e.g. EER) should be computed outside
+                               the function.
 
         :return: valid_loss, embeddings and labels (None if output_embeddings is False).
         """
@@ -446,13 +443,13 @@ class Trainer():
         self.sess.run(tf.global_variables_initializer())
         self.sess.run(tf.local_variables_initializer())
         assert batch_type == "softmax" or batch_type == "end2end", "The batch_type can be softmax or end2end"
-        assert not (output_embeddings and batch_type == "end2end"), "When output_embedding is True, the batch type can only be softmax"
 
+        curr_step = 0
         # Load the model. The valid function can only be called after training (of course...)
         if os.path.isfile(os.path.join(self.model, "checkpoint")):
             curr_step = self.load()
         else:
-            sys.exit("Cannot find model in %s" % self.model)
+            tf.logging.info("[Warning] Cannot find model in %s. Random initialization is used in validation." % self.model)
 
         valid_ops = [self.valid_ops, self.valid_summary]
         embeddings_val = None
@@ -476,7 +473,7 @@ class Trainer():
             while True:
                 try:
                     if num_batches % 1000 == 0:
-                        tf.logging.info("valid step: %d" % num_batches)
+                        tf.logging.info("valid step: %d" % num_batcheems)
                     features, labels = data_loader.fetch()
                     valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
                                                                     self.valid_labels: labels})
@@ -492,40 +489,40 @@ class Trainer():
                 except DataOutOfRange:
                     break
             data_loader.stop()
-        else:
-            if batch_type == "softmax":
-                data_loader = KaldiDataSeqQueue(data, spklist,
-                                                num_parallel=2,
-                                                max_qsize=10,
-                                                batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
-                                                min_len=self.params.min_segment_len,
-                                                max_len=self.params.max_segment_len,
-                                                shuffle=True)
-            elif batch_type == "end2end":
-                data_loader = KaldiDataRandomQueue(data, spklist,
-                                                   num_parallel=2,
-                                                   max_qsize=10,
-                                                   num_speakers=self.params.num_speakers_per_batch,
-                                                   num_segments=self.params.num_segments_per_speaker,
-                                                   min_len=self.params.min_segment_len,
-                                                   max_len=self.params.max_segment_len,
-                                                   shuffle=True)
-            else:
-                raise ValueError
 
-            data_loader.start()
-            for _ in xrange(self.params.valid_max_iterations):
-                try:
-                    if num_batches % 1000 == 0:
-                        tf.logging.info("valid step: %d" % num_batches)
-                    features, labels = data_loader.fetch()
-                    valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
-                                                                    self.valid_labels: labels})
-                    loss = valid_val[0]["valid_loss"]
-                    num_batches += 1
-                except DataOutOfRange:
-                    break
-            data_loader.stop()
+        if batch_type == "softmax":
+            data_loader = KaldiDataSeqQueue(data, spklist,
+                                            num_parallel=2,
+                                            max_qsize=10,
+                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
+                                            min_len=self.params.min_segment_len,
+                                            max_len=self.params.max_segment_len,
+                                            shuffle=True)
+        elif batch_type == "end2end":
+            data_loader = KaldiDataRandomQueue(data, spklist,
+                                               num_parallel=2,
+                                               max_qsize=10,
+                                               num_speakers=self.params.num_speakers_per_batch,
+                                               num_segments=self.params.num_segments_per_speaker,
+                                               min_len=self.params.min_segment_len,
+                                               max_len=self.params.max_segment_len,
+                                               shuffle=True)
+        else:
+            raise ValueError
+
+        data_loader.start()
+        for _ in xrange(self.params.valid_max_iterations):
+            try:
+                if num_batches % 1000 == 0:
+                    tf.logging.info("valid step: %d" % num_batches)
+                features, labels = data_loader.fetch()
+                valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
+                                                                self.valid_labels: labels})
+                loss = valid_val[0]["valid_loss"]
+                num_batches += 1
+            except DataOutOfRange:
+                break
+        data_loader.stop()
 
         # We only save the summary for the last batch.
         self.valid_summary_writer.add_summary(valid_val[1], curr_step)

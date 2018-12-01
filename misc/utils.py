@@ -188,3 +188,50 @@ def get_checkpoint(model, checkpoint=-1):
         for checkpoint in all_model_checkpoint_paths:
             f.write("all_model_checkpoint_paths: \"%s\"\n" % checkpoint)
     return model_checkpoint_path
+
+
+def compute_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
+    """Compute pairwise EER using cosine similarity.
+
+    Args:
+        embeddings: The embeddings.
+        labels: The class labels.
+        max_num_embeddings: The max number of embeddings to compute the EER.
+    :return: The pairwise EER.
+    """
+    import pdb
+    pdb.set_trace()
+    from sklearn import metrics
+    from scipy.optimize import brentq
+    from scipy.interpolate import interp1d
+    import numpy as np
+    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    num_embeddings = embeddings.shape[0]
+    if num_embeddings > max_num_embeddings:
+        # Downsample the embeddings and labels
+        step = num_embeddings / max_num_embeddings
+        embeddings = embeddings[range(0, num_embeddings, step), :]
+        labels = labels[range(0, num_embeddings, step)]
+        num_embeddings = embeddings.shape[0]
+
+    score_mat = np.dot(embeddings, np.transpose(embeddings))
+    scores = np.zeros((num_embeddings * (num_embeddings - 1) / 2))
+    keys = np.zeros((num_embeddings * (num_embeddings - 1) / 2))
+    index = 0
+    for i in range(num_embeddings - 1):
+        for j in range(i + 1, num_embeddings):
+            scores[index] = score_mat[i, j]
+            keys[index] = 1 if labels[i] == labels[j] else 0
+            index += 1
+
+    fpr, tpr, thresholds = metrics.roc_curve(keys, scores, pos_label=1)
+    eer = brentq(lambda x: 1. - x - interp1d(fpr, tpr)(x), 0., 1.)
+    # thresh = interp1d(fpr, thresholds)(eer)
+
+    with open("test.txt", "w") as f:
+        for i in range(num_embeddings):
+            if keys[i] == 1:
+                f.write("%f target" % scores[i])
+            else:
+                f.write("%f nontarget" % scores[i])
+    return eer

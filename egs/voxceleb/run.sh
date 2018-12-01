@@ -134,10 +134,7 @@ fi
 
 # Now we prepare the features to generate examples for xvector training.
 if [ $stage -le 4 ]; then
-  # Note:
-  # I found that if the data is compressed, the loading speed is very slow. Although uncompressed version takes larger
-  # disk space, it is still worthy to using the uncompressed one.
-  local/nnet3/xvector/prepare_feats_for_egs.sh --compress false --nj 40 --cmd "$train_cmd" \
+  local/nnet3/xvector/prepare_feats_for_egs.sh --nj 40 --cmd "$train_cmd" \
     $data/voxceleb_train_combined $data2/voxceleb_train_combined_no_sil $exp/voxceleb_train_combined_no_sil
   utils/fix_data_dir.sh $data2/voxceleb_train_combined_no_sil
 fi
@@ -251,12 +248,12 @@ fi
 #    $nnetdir
 #
 #fi
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1
 
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 100 --use-gpu false --checkpoint -1 --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 200 --use-gpu false --checkpoint -1 --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data2/voxceleb_train $nnetdir/xvectors_voxceleb_train
 
@@ -280,6 +277,7 @@ if [ $stage -le 9 ]; then
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
 fi
+exit 1
 
 if [ $stage -le 10 ]; then
   # Compute the mean vector for centering the evaluation xvectors.
