@@ -202,7 +202,7 @@ if __name__ == "__main__":
         assert np.allclose(after_pooling, p)
 
     # generalized end2end loss
-    from model.loss import ge2e
+    from model.loss import ge2e_loss
     num_speakers = 64
     num_segments_per_speaker = 10
     num_data = num_speakers * num_segments_per_speaker
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     reuse_variables = False
     for ge2e_type in ["softmax", "contrastive"]:
         params.dict["ge2e_loss_type"] = ge2e_type
-        loss = ge2e(embeddings, labels, 10, params, is_training=True, reuse_variables=reuse_variables)
+        loss = ge2e_loss(embeddings, labels, 10, params, is_training=True, reuse_variables=reuse_variables)
         reuse_variables = True
         grads = tf.gradients(loss, embeddings)
         embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
@@ -223,6 +223,35 @@ if __name__ == "__main__":
 
         from model.test_utils import compute_ge2e_loss
         loss_np = compute_ge2e_loss(embeddings_val, labels_val, params.init_end2end_w, params.init_end2end_b, params.ge2e_loss_type)
+
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            loss_val, grad_val = sess.run([loss, grads], feed_dict={embeddings: embeddings_val,
+                                                                    labels: labels_val})
+            assert not np.any(np.isnan(grad_val)), "Gradient should not be nan"
+            assert np.allclose(loss_val, loss_np)
+
+    # triplet loss
+    from model.loss import triplet_loss
+    num_speakers = 32
+    num_segments_per_speaker = 10
+    num_data = num_speakers * num_segments_per_speaker
+    params.dict["num_speakers_per_batch"] = num_speakers
+    params.dict["num_segments_per_speaker"] = num_segments_per_speaker
+    params.dict["margin"] = 0.5
+    for squared in [True, False]:
+        params.dict["triplet_loss_squared"] = squared
+        loss = triplet_loss(embeddings, labels, 10, params)
+        grads = tf.gradients(loss, embeddings)
+
+        embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+        labels_val = np.zeros(num_data, dtype=np.int32)
+        for i in range(num_speakers):
+            labels_val[i * num_segments_per_speaker:(i + 1) * num_segments_per_speaker] = i
+        embeddings_val[-1, :] = embeddings_val[-2, :]
+
+        from model.test_utils import compute_triplet_loss
+        loss_np = compute_triplet_loss(embeddings_val, labels_val, params.margin, params.triplet_loss_squared)
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())

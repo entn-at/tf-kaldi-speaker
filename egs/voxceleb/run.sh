@@ -23,7 +23,7 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=7
+stage=8
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
@@ -250,24 +250,26 @@ fi
 #fi
 
 nnetdir=$exp/xvector_nnet_tdnn_softmax_1
+checkpoint=950000
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 200 --use-gpu false --checkpoint -1 --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 200 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data2/voxceleb_train $nnetdir/xvectors_voxceleb_train
 
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 40 --use-gpu false --checkpoint -1 --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 40 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data2/voxceleb_test $nnetdir/xvectors_voxceleb_test
 fi
 
 if [ $stage -le 9 ]; then
   # Cosine similarity
+  mkdir -p $nnetdir/scores
   cat $voxceleb1_trials | awk '{print $1, $2}' | \
     ivector-compute-dot-products - \
-      'ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |' \
-      'ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |' \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |" \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |" \
       $nnetdir/scores/scores_voxceleb_test.cos
 
   eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos) 2> /dev/null`
@@ -277,7 +279,6 @@ if [ $stage -le 9 ]; then
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
 fi
-exit 1
 
 if [ $stage -le 10 ]; then
   # Compute the mean vector for centering the evaluation xvectors.
@@ -321,6 +322,14 @@ if [ $stage -le 11 ]; then
   # EER: 5.329%
   # minDCF(p-target=0.01): 0.4933
   # minDCF(p-target=0.001): 0.6168
+
+  # tdnn+softmax 1 final step:
+  # EER: 3.001%
+  # minDCF(p-target=0.01): 0.3053
+  # minDCF(p-target=0.001): 0.5150
+  #
+  # tdnn+softmax 1 step 950k (before lr < 1e-6)
+
 fi
 
 

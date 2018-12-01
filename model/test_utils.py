@@ -83,3 +83,71 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
             loss += 1 - sigmoid(sim[i, class_index[i]]) + other[-1]
             cnt += 1
     return loss
+
+
+def pairwise_euc_distances_np(feature, squared=False):
+    """Computes the pairwise distance matrix in numpy.
+    Args:
+        feature: 2-D numpy array of size [number of data, feature dimension]
+        squared: The L2 distance or square root of the distance.
+    Returns:
+        square_pairwise_distances:
+        pairwise_distances: 2-D numpy array of size
+                            [number of data, number of data].
+    """
+    triu = np.triu_indices(feature.shape[0], 1)
+    upper_tri_pdists = np.linalg.norm(feature[triu[1]] - feature[triu[0]], axis=1)
+    square_upper_tri_pdists = upper_tri_pdists ** 2.
+    num_data = feature.shape[0]
+    pairwise_distances = np.zeros((num_data, num_data))
+    pairwise_distances[np.triu_indices(num_data, 1)] = upper_tri_pdists
+    square_pairwise_distances = np.zeros((num_data, num_data))
+    square_pairwise_distances[np.triu_indices(num_data, 1)] = square_upper_tri_pdists
+
+    # Make symmetrical.
+    if squared:
+        distances = square_pairwise_distances + square_pairwise_distances.T - np.diag(
+            square_pairwise_distances.diagonal())
+    else:
+        distances = pairwise_distances + pairwise_distances.T - np.diag(
+                pairwise_distances.diagonal())
+    return distances
+
+
+def compute_triplet_loss(embeddings, labels, margin, squared):
+    """Compute the triplet loss. This is used to check the tf implementation in loss.py
+
+    Args:
+        embeddings: The input features.
+        labels: The labels.
+        margin: The margin in triplet loss.
+        squared: The distance is squared or not.
+    :return: The triplet loss
+    """
+    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    num_data = embeddings.shape[0]
+    distances = pairwise_euc_distances_np(embeddings, squared)
+    loss_np = 0.0
+    num_positives_np = 0
+    for i in range(num_data):
+        for j in range(num_data):
+            d_xy = distances[i, j]
+            semi_hard_dist = []
+            all_dist = []
+
+            for k in range(num_data):
+                if labels[k] != labels[i]:
+                    all_dist.append(distances[i, k])
+                    if distances[i, k] > d_xy:
+                        semi_hard_dist.append(distances[i, k])
+
+            if len(semi_hard_dist) == 0:
+                d_xz = np.amax(all_dist)
+            else:
+                d_xz = np.amin(semi_hard_dist)
+
+            if labels[i] == labels[j] and i != j:
+                loss = np.maximum(0.0, margin + d_xy - d_xz)
+                loss_np += loss
+                num_positives_np += 1
+    return loss_np / num_positives_np

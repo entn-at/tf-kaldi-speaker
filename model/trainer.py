@@ -5,7 +5,7 @@ import sys
 import time
 import numpy as np
 from model.tdnn import tdnn
-from model.loss import softmax, ge2e
+from model.loss import softmax, ge2e_loss
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 
 
@@ -183,7 +183,7 @@ class Trainer():
         if loss_type == "softmax":
             self.loss_network = softmax
         elif loss_type == "ge2e":
-            self.loss_network = ge2e
+            self.loss_network = ge2e_loss
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
@@ -473,7 +473,7 @@ class Trainer():
             while True:
                 try:
                     if num_batches % 1000 == 0:
-                        tf.logging.info("valid step: %d" % num_batcheems)
+                        tf.logging.info("valid step: %d" % num_batches)
                     features, labels = data_loader.fetch()
                     valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
                                                                     self.valid_labels: labels})

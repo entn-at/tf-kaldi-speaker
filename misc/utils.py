@@ -107,26 +107,6 @@ class ValidLoss():
         self.min_loss_epoch = -1
 
 
-def shape_list(x):
-    """Return list of dims, statically where possible."""
-    x = tf.convert_to_tensor(x)
-
-    # If unknown rank, return dynamic shape
-    if x.get_shape().dims is None:
-        return tf.shape(x)
-
-    static = x.get_shape().as_list()
-    shape = tf.shape(x)
-
-    ret = []
-    for i in xrange(len(static)):
-        dim = static[i]
-        if dim is None:
-            dim = shape[i]
-        ret.append(dim)
-    return ret
-
-
 def load_lr(filename):
     """Load learning rate from a saved file"""
     val = 0
@@ -149,11 +129,6 @@ def load_valid_loss(filename):
                 min_loss.min_loss = loss
                 min_loss.min_loss_epoch = epoch
     return min_loss
-
-
-def l2_normalize(x):
-    """Normalize the last dimension vector of the input matrix"""
-    return x / tf.sqrt(tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True) + 1e-16)
 
 
 def get_checkpoint(model, checkpoint=-1):
