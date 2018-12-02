@@ -1,0 +1,43 @@
+{
+  "TODO": "We may add some hierarchical structure to make the json more readable.",
+  "Tunable": "learning_rate, momentum, batch_size, weight_l2_regularizer and clip_gradient",
+  "Issues": "The batch is quite large if GE2E is used, so larger GPU memory is needed and the network may be smaller.",
+
+  "seed": 0,
+  "network_type": "tdnn_small",
+  "last_layer_linear": true,
+  "loss_func": "ge2e",
+  "init_end2end_w": 10,
+  "init_end2end_b": -5,
+  "ge2e_loss_type": "softmax",
+  "batch_type": "end2end",
+  "pooling_type": "statistics_pooling",
+  "num_nodes_pooling_layer": 1500,
+  "num_nodes_last_layer": 256,
+  "embedding_node": "tdnn7_dense",
+
+  "learning_rate": 0.01,
+  "momentum": 0.9,
+  "use_nesterov": false,
+  "clip_gradient": true,
+  "clip_gradient_norm": 3,
+
+  "weight_l2_regularizer": 1e-4,
+  "batchnorm_momentum": 0.99,
+
+  "num_epochs": 200,
+  "num_steps_per_epoch": 5000,
+  "reduce_lr_epochs": 2,
+  "show_training_progress": 100,
+  "keep_checkpoint_max": 100,
+  "save_summary_steps": 500,
+  "save_checkpoints_steps": 5000,
+  "valid_max_iterations": 1000,
+
+  "num_parallel_datasets": 16,
+  "max_queue_size": 10,
+  "num_speakers_per_batch": 64,
+  "num_segments_per_speaker": 10,
+  "min_segment_len": 200,
+  "max_segment_len": 400
+}

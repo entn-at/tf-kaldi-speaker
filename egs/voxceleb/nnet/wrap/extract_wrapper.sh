@@ -36,6 +36,14 @@ if $normalize; then
   cmdopt_norm="--normalize"
 fi
 
+# Hardly set the MKL-related variables to make the code run on one cpu.
+export MKL_NUM_THREADS=1
+# export MKL_DOMAIN_NUM_THREADS="MKL_BLAS=1"
+# export OMP_NUM_THREADS=1
+# export MKL_DYNAMIC="FALSE"
+# export OMP_DYNAMIC="FALSE"
+
 export PYTHONPATH=`pwd`/../../:$PYTHONPATH
+
 python nnet/lib/extract.py --gpu $gpuid --min-chunk-size $min_chunk_size --chunk-size $chunk_size $cmdopt_norm \
          "$nnetdir" "$feat" "$dir"

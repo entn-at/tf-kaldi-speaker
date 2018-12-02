@@ -208,8 +208,8 @@ if [ $stage -le 6 ]; then
   awk -v id=0 '{print $1, id++}' $end2end_valid_dir/spk2utt > $end2end_valid_dir/spklist
 fi
 
-#if [ $stage -le 7 ]; then
-## Training a softmax network
+if [ $stage -le 7 ]; then
+# Training a softmax network
 #nnetdir=$exp/xvector_nnet_tdnn_softmax_1
 #nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
@@ -228,15 +228,15 @@ fi
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-#nnetdir=$exp/xvector_nnet_tdnn_softmax_4
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_4.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $nnetdir
-
 ## Training a GE2E network
 #nnetdir=$exp/xvector_nnet_ge2e_softmax
 #nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_ge2e_softmax_3
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e_3.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
 #    $nnetdir
@@ -247,10 +247,12 @@ fi
 #    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
 #    $nnetdir
 #
-#fi
+echo
+fi
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1
-checkpoint=950000
+
+nnetdir=$exp/xvector_nnet_ge2e_softmax
+checkpoint=-1
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
@@ -279,6 +281,7 @@ if [ $stage -le 9 ]; then
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
 fi
+
 
 if [ $stage -le 10 ]; then
   # Compute the mean vector for centering the evaluation xvectors.
@@ -328,8 +331,25 @@ if [ $stage -le 11 ]; then
   # minDCF(p-target=0.01): 0.3053
   # minDCF(p-target=0.001): 0.5150
   #
-  # tdnn+softmax 1 step 950k (before lr < 1e-6)
-
+  # tdnn+softmax 1 step 950k (before lr < 1e-5)
+  # EER: 3.001%
+  # minDCF(p-target=0.01): 0.3071
+  # minDCF(p-target=0.001): 0.5173
+  #
+  # tdnn+softmax 2 final step:
+  # EER: 3.34%
+  # minDCF(p-target=0.01): 0.3507
+  # minDCF(p-target=0.001): 0.6197
+  #
+  # tdnn+softmax 3 final step:
+  # EER: 3.282%
+  # minDCF(p-target=0.01): 0.3640
+  # minDCF(p-target=0.001): 0.5182
+  #
+  # tdnn+softmax 4 final step:
+  # EER: 2.381%
+  # minDCF(p-target=0.01): 0.2431
+  # minDCF(p-target=0.001): 0.3865
 fi
 
 

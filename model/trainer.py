@@ -5,18 +5,21 @@ import sys
 import time
 import numpy as np
 from model.tdnn import tdnn
-from model.loss import softmax, ge2e_loss
+from model.tdnn_small import tdnn_small
+from model.test_network import test_network
+from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 
 
 class Trainer():
     """Handle the training, validation and prediction"""
 
-    def __init__(self, params, model_dir):
+    def __init__(self, params, model_dir, single_cpu=False):
         """
         Args:
             params: Parameters loaded from JSON.
             model_dir: The model directory.
+            single_cpu: Run Tensorflow on one cpu. (default = False)
         """
 
         # The network configuration is set while the loss is left to the build function.
@@ -25,6 +28,10 @@ class Trainer():
         self.network_type = params.network_type
         if params.network_type == "tdnn":
             self.network = tdnn
+        elif params.network_type == "tdnn_small":
+            self.network = tdnn_small
+        elif params.network_type == "test_network":
+            self.network = test_network
         else:
             raise NotImplementedError("Not implement %s network" % params.network_type)
         self.loss_type = None
@@ -33,8 +40,13 @@ class Trainer():
         # We have to save all the parameters since the different models may need different parameters
         self.params = params
 
-        # TODO: add other parameters to the config.
-        self.sess_config = tf.ConfigProto(allow_soft_placement=True)
+        if single_cpu:
+            self.sess_config = tf.ConfigProto(intra_op_parallelism_threads=1,
+                                              inter_op_parallelism_threads=1,
+                                              device_count={'CPU': 1},
+                                              allow_soft_placement=True)
+        else:
+            self.sess_config = tf.ConfigProto(allow_soft_placement=True)
         self.sess = tf.Session(config=self.sess_config)
 
         # The model is saved in model/nnet and the evaluation result is saved in model/nnet/eval
@@ -184,6 +196,10 @@ class Trainer():
             self.loss_network = softmax
         elif loss_type == "ge2e":
             self.loss_network = ge2e_loss
+        elif loss_type == "triplet_loss":
+            self.loss_network = triplet_loss
+        elif loss_type == "test_loss":
+            self.loss_network = test_loss
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
@@ -263,6 +279,7 @@ class Trainer():
         for grad, var in grads:
             if grad is not None:
                 self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+                self.train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
 
         for var in tf.trainable_variables():
             self.train_summary.append(tf.summary.histogram(var.op.name, var))

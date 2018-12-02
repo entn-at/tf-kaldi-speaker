@@ -10,6 +10,11 @@ def sigmoid(x):
     """Sigmoid transform."""
     return 1 / (1 + np.exp(-x))
 
+def softmax(x):
+    """Compute softmax values for each sets of scores in x."""
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=-1, keepdims=True)
+
 
 def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
     """Compute generalized end-to-end loss. This is simply used to check the tf implementation in loss.py.
@@ -69,8 +74,10 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
 
     cnt = 0
     if ge2e_type == "softmax":
+        s = softmax(sim)
         for i in range(n_samples):
-            loss -= sim[i, class_index[i]] - np.log(np.sum(np.exp(sim[i, :])) + 1e-16)
+            loss -= np.log(s[i, class_index[i]])
+            # loss -= sim[i, class_index[i]] - np.log(np.sum(np.exp(sim[i, :])) + 1e-16)
             cnt += 1
     else:
         for i in range(n_samples):
@@ -82,7 +89,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
             other = sorted(other)
             loss += 1 - sigmoid(sim[i, class_index[i]]) + other[-1]
             cnt += 1
-    return loss
+    return loss / cnt
 
 
 def pairwise_euc_distances_np(feature, squared=False):

@@ -174,8 +174,6 @@ def compute_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
         max_num_embeddings: The max number of embeddings to compute the EER.
     :return: The pairwise EER.
     """
-    import pdb
-    pdb.set_trace()
     from sklearn import metrics
     from scipy.optimize import brentq
     from scipy.interpolate import interp1d
