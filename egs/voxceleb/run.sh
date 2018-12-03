@@ -23,7 +23,7 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=8
+stage=7
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
@@ -247,6 +247,23 @@ if [ $stage -le 7 ]; then
 #    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
 #    $nnetdir
 #
+#nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_1
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_1.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_2.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $nnetdir
+
+nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_3
+nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_3.json \
+    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+    $nnetdir
 echo
 fi
 

@@ -2,6 +2,8 @@
   "TODO": "We may add some hierarchical structure to make the json more readable.",
   "Tunable": "learning_rate, momentum, batch_size, weight_l2_regularizer and clip_gradient",
   "Issues": "The batch is quite large if GE2E is used, so larger GPU memory is needed and the network may be smaller.",
+  "Problems": "We may need to tune the reduce_lr_epochs (5) to prevent the learning rate decrease too fast, or increase num_steps_per_epoch (10000), we may also remove the graident clipping if no RNN is used.",
+  "Problems2": "Control the learning rate."
 
   "seed": 0,
   "network_type": "tdnn_small",
@@ -12,17 +14,16 @@
   "ge2e_loss_type": "softmax",
   "batch_type": "end2end",
   "pooling_type": "statistics_pooling",
-  "num_nodes_pooling_layer": 1500,
+  "num_nodes_pooling_layer": 512,
   "num_nodes_last_layer": 256,
   "embedding_node": "tdnn7_dense",
 
-  "learning_rate": 0.01,
-  "momentum": 0.9,
+  "learning_rate": 0.001,
   "use_nesterov": false,
   "clip_gradient": true,
   "clip_gradient_norm": 3,
 
-  "weight_l2_regularizer": 1e-4,
+  "weight_l2_regularizer": 1e-6,
   "batchnorm_momentum": 0.99,
 
   "num_epochs": 200,

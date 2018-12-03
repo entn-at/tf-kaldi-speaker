@@ -233,10 +233,22 @@ class Trainer():
         self.global_step = tf.placeholder(tf.int32, name="global_step")
         self.learning_rate = tf.placeholder(tf.float32, name="learning_rate")
 
-        # SGD with momentum
-        # It is also possible to use other optimizers, e.g. Adam.
-        # opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
-        opt = tf.train.GradientDescentOptimizer(self.learning_rate, name="optimizer")
+        if "optimizer" not in self.params.dict:
+            # The default optimizer is sgd
+            self.params.dict["optimizer"] = "sgd"
+
+        if self.params.optimizer == "sgd":
+            if "momentum" in self.params.dict:
+                sys.exit("Using sgd as the optimizer and you should not specify the momentum.")
+            tf.logging.info("***** Using SGD as the optimizer.")
+            opt = tf.train.GradientDescentOptimizer(self.learning_rate, name="optimizer")
+        elif self.params.optimizer == "momentum":
+            # SGD with momentum
+            # It is also possible to use other optimizers, e.g. Adam.
+            tf.logging.info("***** Using Momentum as the optimizer.")
+            opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
+        else:
+            sys.exit("Optimizer %s is not supported." % self.params.optimizer)
 
         # Use name_space here. Create multiple name_spaces if multi-gpus
         with tf.name_scope("train") as scope:
@@ -405,9 +417,9 @@ class Trainer():
         #    tune_period = 100
         #    tune_times = 50
         init_learning_rate = 1e-4
-        factor = 1.25
+        factor = 1.15
         tune_period = 100
-        tune_times = 50
+        tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
         for step in xrange(tune_period * tune_times):
