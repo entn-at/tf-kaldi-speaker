@@ -7,8 +7,9 @@ import numpy as np
 from model.tdnn import tdnn
 from model.tdnn_small import tdnn_small
 from model.test_network import test_network
-from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
+from model.loss import softmax, asoftmax, ge2e_loss, triplet_loss, test_loss
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
+from misc.utils import substring_in_list
 
 
 class Trainer():
@@ -102,6 +103,9 @@ class Trainer():
         self.valid_labels = None
         self.pred_features = None
 
+        self.temp_features = None
+        self.temp_labels = None
+
     def reset(self):
         """Reset the graph so we can create new input pipeline or graph. (Or for other purposes)"""
         try:
@@ -148,13 +152,11 @@ class Trainer():
         self.is_loaded = True
         return step
 
-    def save(self, step, lr):
+    def save(self, step):
         """Save the model.
 
         Args:
             step: The global step.
-            lr: The learning rate. We need to save the learning rate thus next time we can recover the value from the
-                checkpoint.
         """
         self.saver.save(self.sess, os.path.join(self.model, "model"), global_step=step)
 
@@ -191,9 +193,19 @@ class Trainer():
                     self.saver = tf.train.Saver()
             return
 
+        # global_step should be defined before loss function since some loss functions use this value to tune
+        # the internal parameters.
+        if self.global_step is None:
+            self.global_step = tf.placeholder(tf.int32, name="global_step")
+            self.params.dict["global_step"] = self.global_step
+
+        # import pdb
+        # pdb.set_trace()
         self.loss_type = loss_type
         if loss_type == "softmax":
             self.loss_network = softmax
+        elif loss_type == "asoftmax":
+            self.loss_network = asoftmax
         elif loss_type == "ge2e":
             self.loss_network = ge2e_loss
         elif loss_type == "triplet_loss":
@@ -207,30 +219,37 @@ class Trainer():
             self.valid_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="valid_features")
             self.valid_labels = tf.placeholder(tf.int32, shape=[None,], name="valid_labels")
             with tf.name_scope("valid") as scope:
-                features, endpoints = self.network(self.valid_features, self.params, is_training, reuse_variables)
-                valid_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
+                # We can adjust some parameters in the config when we do validation
+                valid_params = self.params
+                if loss_type == "softmax":
+                    pass
+                elif loss_type == "asoftmax":
+                    valid_params.asoftmax_m = 1
+                else:
+                    pass
+
+                features, endpoints = self.network(self.valid_features, valid_params, is_training, reuse_variables)
+                valid_loss = self.loss_network(features, self.valid_labels, num_speakers, valid_params, is_training, reuse_variables)
 
                 # We can evaluate other stuff in the valid_ops. Just add the new values to the dict.
                 # We may also need to check other values expect for the loss. Leave the task to other functions.
                 # So I create the embedding output for the validation set thus we can do lots of things with it.
                 self.embeddings = endpoints[self.params.embedding_node]
 
-                valid_loss, valid_loss_op = tf.metrics.mean(valid_loss)
-                self.valid_ops["valid_loss"] = valid_loss
-                self.valid_ops["valid_loss_op"] = valid_loss_op
-                valid_loss_summary = tf.summary.scalar("loss", valid_loss)
+                self.valid_ops["raw_valid_loss"] = valid_loss
+                mean_valid_loss, mean_valid_loss_op = tf.metrics.mean(valid_loss)
+                self.valid_ops["valid_loss"] = mean_valid_loss
+                self.valid_ops["valid_loss_op"] = mean_valid_loss_op
+                valid_loss_summary = tf.summary.scalar("loss", mean_valid_loss)
                 self.valid_summary = tf.summary.merge([valid_loss_summary])
-
                 if self.saver is None:
                     self.saver = tf.train.Saver(max_to_keep=self.params.keep_checkpoint_max)
-
                 if self.valid_summary_writer is None:
                     self.valid_summary_writer = tf.summary.FileWriter(os.path.join(self.model, "eval"), self.sess.graph)
             return
 
         self.train_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="train_features")
         self.train_labels = tf.placeholder(tf.int32, shape=[None, ], name="train_labels")
-        self.global_step = tf.placeholder(tf.int32, name="global_step")
         self.learning_rate = tf.placeholder(tf.float32, name="learning_rate")
 
         if "optimizer" not in self.params.dict:
@@ -278,13 +297,13 @@ class Trainer():
             grads_clip, _ = tf.clip_by_global_norm(grads, self.params.clip_gradient_norm)  # l2 norm clipping
 
             # we follow the instruction in ge2e paper to scale the learning rate for w and b
+            # Actually, I wonder that we can just simply set a large value for w (e.g. 20) and fix it.
             if self.loss_type == "ge2e":
                 # The parameters w and b must be the last variables in the gradients
                 grads_clip = grads_clip[:-2] + [0.01 * grad for grad in grads_clip[-2:]]
                 # Simply check the position of w and b
                 for var in vars[-2:]:
                     assert("w" in var.name or "b" in var.name)
-
             grads = zip(grads_clip, vars)
 
         # The values and gradients are added to summeries
@@ -295,7 +314,6 @@ class Trainer():
 
         for var in tf.trainable_variables():
             self.train_summary.append(tf.summary.histogram(var.op.name, var))
-
         self.train_summary = tf.summary.merge(self.train_summary)
 
         with tf.control_dependencies(batchnorm_update_ops):
@@ -373,14 +391,15 @@ class Trainer():
                                                                 self.learning_rate: learning_rate})
 
                 if step % self.params.save_checkpoints_steps == 0 and curr_step != 0:
-                    self.save(curr_step, learning_rate)
+                    self.save(curr_step)
                 curr_step += 1
             except DataOutOfRange:
                 tf.logging.info("Finished reading features.")
                 break
 
         data_loader.stop()
-        self.save(curr_step, learning_rate)
+        self.save(curr_step)
+
         return
 
     def train_tune_lr(self, data, spklist):
@@ -452,6 +471,43 @@ class Trainer():
         fp_lr.close()
         return
 
+    def finetune(self, exclude_list, data=None, spklist=None, learning_rate=None):
+        """Start from a pre-trained model and other parameters are initialized using default initializer.
+        Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
+        we need to fully load the model rather than loading part of the graph.
+
+        Args:
+            exclude_list: A list. Do NOT restore the parameters in the exclude_list. This is useful in fine-truning
+                          an existing model. We load a part of the pre-trained model and leave the other part
+                          randomly initialized.
+        Deprecated:
+            data: The training data directory.
+            spklist: The spklist is a file map speaker name to the index.
+            learning_rate: The learning rate is passed by the main program. The main program can easily tune the
+                           learning rate according to the validation accuracy or anything else.
+        """
+        # initialize all variables
+        self.sess.run(tf.global_variables_initializer())
+
+        # Load parts of the model
+        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+        restore_variables = []
+        for v in variables:
+            if not substring_in_list(v.name, exclude_list):
+                restore_variables.append(v)
+            else:
+                tf.logging.info("[Info] Ignore %s when loading the checkpoint" % v.name)
+        finetune_saver = tf.train.Saver(var_list=restore_variables)
+        ckpt = tf.train.get_checkpoint_state(self.model)
+        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+        finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
+
+        # Save the new model. The new model is basically the same with the pre-trained one, while parameters
+        # NOT in the pre-trained model are initialized.
+        # Set the step to 1.
+        self.save(1)
+        return
+
     def valid(self, data, spklist, batch_type="softmax", output_embeddings=False):
         """Evaluate on the validation set
 
@@ -498,14 +554,15 @@ class Trainer():
 
             # In this mode, the embeddings and labels will be saved and output. It needs more memory and takes longer
             # to process these values.
-            valid_ops += [self.embeddings, self.valid_labels]
+            valid_ops_emb = valid_ops + [self.embeddings, self.valid_labels]
             while True:
                 try:
-                    if num_batches % 1000 == 0:
+                    if num_batches % 100 == 0:
                         tf.logging.info("valid step: %d" % num_batches)
                     features, labels = data_loader.fetch()
-                    valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
-                                                                    self.valid_labels: labels})
+                    valid_val = self.sess.run(valid_ops_emb, feed_dict={self.valid_features: features,
+                                                                    self.valid_labels: labels,
+                                                                    self.global_step: curr_step})
                     # Save the embeddings and labels
                     if embeddings_val is None:
                         embeddings_val = valid_val[-2]
@@ -542,11 +599,12 @@ class Trainer():
         data_loader.start()
         for _ in xrange(self.params.valid_max_iterations):
             try:
-                if num_batches % 1000 == 0:
+                if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
                 features, labels = data_loader.fetch()
                 valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
-                                                                self.valid_labels: labels})
+                                                                self.valid_labels: labels,
+                                                                self.global_step: curr_step})
                 loss = valid_val[0]["valid_loss"]
                 num_batches += 1
             except DataOutOfRange:

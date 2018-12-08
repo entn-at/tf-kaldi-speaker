@@ -3,7 +3,7 @@ import numpy as np
 from model.common import shape_list, l2_normalize, pairwise_euc_distances
 
 
-# TODO: add triplet loss, angular-softmax, additive margin softmax, additive angular margin softmax
+# TODO: add additive margin softmax, additive angular margin softmax
 
 
 def softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
@@ -18,11 +18,14 @@ def softmax(features, labels, num_outputs, params, is_training=None, reuse_varia
         reuse_variables: Share the created variables or not.
     :return: A scalar tensor which is the loss value.
     """
+    weight_l2_regularizer = params.weight_l2_regularizer
+    if "output_weight_l2_regularizer" in params.dict:
+        weight_l2_regularizer = params.output_weight_l2_regularizer
     with tf.variable_scope("softmax", reuse=reuse_variables):
         logits = tf.layers.dense(features,
                                    num_outputs,
                                    activation=None,
-                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer),
                                    name="output")
         loss = tf.losses.sparse_softmax_cross_entropy(labels, logits)
     return loss
@@ -49,6 +52,10 @@ def ge2e_loss(features, labels, num_outputs, params, is_training=None, reuse_var
     :return: GE2E loss.
     """
     with tf.variable_scope("ge2e", reuse=reuse_variables):
+        # L2 normalization
+        with tf.name_scope("length_norm"):
+            features = l2_normalize(features)
+
         # There are 2 variables in the End2End loss
         w = tf.get_variable("w", initializer=float(params.init_end2end_w), dtype=tf.float32)
         b = tf.get_variable("b", initializer=float(params.init_end2end_b), dtype=tf.float32)
@@ -66,8 +73,6 @@ def ge2e_loss(features, labels, num_outputs, params, is_training=None, reuse_var
         num_speakers = params.num_speakers_per_batch
         assert num_segments_per_speaker != 1
 
-        # L2 normalization
-        features = l2_normalize(features)
         features_reshape = tf.reshape(features, shape=[num_speakers, num_segments_per_speaker, dim])
 
         # Centers for each speaker
@@ -140,7 +145,8 @@ def triplet_loss(features, labels, num_outputs, params, is_training=None, reuse_
     """
     with tf.variable_scope("triplet_loss", reuse=reuse_variables):
         # L2 normalization
-        features = l2_normalize(features)
+        with tf.name_scope("length_norm"):
+            features = l2_normalize(features)
 
         # Reshape [batch_size] label tensor to a [batch_size, 1] label tensor.
         lshape = tf.shape(labels)
@@ -254,7 +260,7 @@ def triplet_loss(features, labels, num_outputs, params, is_training=None, reuse_
         return loss
 
 
-def angular_softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
+def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
     """Compute angular softmax.
     SphereFace: Deep Hypersphere Embedding for Face Recognition
     https://arxiv.org/abs/1704.08063
@@ -265,73 +271,199 @@ def angular_softmax(features, labels, num_outputs, params, is_training=None, reu
         num_outputs: The number of classes.
         params: params.weight_l2_regularizer: the L2 regularization.
                 params.asoftmax_m: The m value.
-                params.asoftmax_lambda: The annealing factor lambda.
+                params.asoftmax_lambda_min,
+                params.asoftmax_lambda_base,
+                params.asoftmax_lambda_gamma,
+                params.asoftmax_lambda_power,
+                params.asoftmax_norm, params.asoftmax_s: If asoftmax_norm is True, asoftmax_s must be specified.
+                                                         This means we normalize the length of the features, and do the
+                                                         scaling on the cosine similarity.
+                params.global_step:  All used to tune lambda.
         is_training: Not used in this case
-        reuse_variables: Not used.
+        reuse_variables: Reuse variables.
     :return: The A-softmax loss.
     """
-    with tf.variable_scope("angular_softmax", reuse=reuse_variables):
+    weight_l2_regularizer = params.weight_l2_regularizer
+    if "output_weight_l2_regularizer" in params.dict:
+        weight_l2_regularizer = params.output_weight_l2_regularizer
+    # We keep the name of the variable_scope as the same with softmax loss to enable fine-tuning.
+    with tf.variable_scope("softmax", reuse=reuse_variables):
         # There are 1 variables in angular softmax: the weight matrix w.
-        w = tf.get_variable("W", [shape_list(features), num_outputs], dtype=tf.float32,
+        # The name of w is selected as the same with softmax to enable fine-tuning.
+        w = tf.get_variable("output/kernel", [shape_list(features)[1], num_outputs], dtype=tf.float32,
                             initializer=tf.contrib.layers.xavier_initializer(),
-                            regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer))
+                            regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
+        norm = tf.norm(features, axis=1, keep_dims=True)
+        features_norm = tf.nn.l2_normalize(features, axis=1)
+        w_norm = tf.nn.l2_normalize(w, axis=0)
 
-        # Wx --> [b, c]
-        logits = tf.matmul(features, w)
+        # cos(theta)
+        cos_theta = tf.matmul(features_norm, w_norm)
+        cos_theta = tf.clip_by_value(cos_theta, -1, 1)
 
-        if params.asoftmax_m == 0:
-            # The normal softmax case.
-            loss = tf.losses.sparse_softmax_cross_entropy(labels, logits)
-            return loss
-
-        eps = 1e-8
-        w_norm = tf.norm(w, axis=0) + eps
-        # ||x|| * cos(theta) = w * x / ||w||
-        logits = logits / w_norm
+        # Feature normalization and scaling if necessary
+        if "asoftmax_norm" in params.dict and params.asoftmax_norm:
+            assert "asoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
+            # logits = s * cos(theta)
+            logits = params.asoftmax_s * cos_theta
+        else:
+            # logits = ||x||*cos(theta)
+            logits = norm * cos_theta
 
         if params.asoftmax_m == 1:
-            # logits = ||x|| * cos(theta)
+            # logits = ||x|| * cos(theta) or s * cos(theta)
             loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
             return loss
 
         ordinal = tf.to_int32(tf.range(shape_list(features)[0]))
         ordinal_labels = tf.stack([ordinal, labels], axis=1)
         # The angle between x and the target w_i.
-        logits_true = tf.gather_nd(logits, ordinal_labels)
 
         # cos(theta_i), theta_i is the angle between x_i and its target w_i.
-        features_norm = tf.norm(features, axis=1) + eps
-        import pdb
-        pdb.set_trace()
-        # shape
-        cos_theta = tf.div(logits_true, features_norm)
+        cos_theta_i = tf.gather_nd(cos_theta, ordinal_labels)
 
         # Phi(theta, m) = (-1)^k * cos(2*theta) - 2 * k
         # Phi(theta_i, m) is a monotonical function about theta given m
         if params.asoftmax_m == 2:
-            phi = 2 * tf.multiply(tf.sign(cos_theta), tf.square(cos_theta)) - 1
+            phi = 2 * tf.multiply(tf.sign(cos_theta_i), tf.square(cos_theta_i)) - 1
         elif params.asoftmax_m == 4:
-            cos_th2 = tf.square(cos_theta)
-            cos_th4 = tf.pow(cos_theta, 4)
-            sign0 = tf.sign(cos_theta)
+            cos_th2 = tf.square(cos_theta_i)
+            cos_th4 = tf.pow(cos_theta_i, 4)
+            sign0 = tf.sign(cos_theta_i)
             sign3 = tf.multiply(tf.sign(2 * cos_th2 - 1), sign0)
             sign4 = 2 * sign0 + sign3 - 3
             phi = sign3 * (8 * cos_th4 - 8 * cos_th2 + 1) + sign4
         else:
             raise NotImplementedError("[ERROR] m=%d is not unsupported." % params.asoftmax_m)
 
-        # ||x|| * Phi(theta, m)
-        scaled_logits = features_norm * phi
-
-        fa = 1.0 / (1.0 + params.asoftmax_lambda)
+        asoftmax_lambda = tf.maximum(float(params.asoftmax_lambda_min),
+                                     params.asoftmax_lambda_base * (1.0 + params.asoftmax_lambda_gamma * tf.to_float(params.global_step)) ** (-params.asoftmax_lambda_power))
+        tf.summary.scalar("asoftmax_lambda", asoftmax_lambda)
+        fa = 1.0 / (1.0 + asoftmax_lambda)
         fs = 1.0 - fa
-        logits_asoftmax = tf.add(logits,
-                                 tf.scatter_nd(ordinal_labels,
-                                               tf.subtract(scaled_logits, logits_true),
-                                               tf.shape(logits, out_type=tf.int64)))
-        updated_logits = fs * logits + fa * logits_asoftmax
+        cos_theta_asoftmax = tf.add(cos_theta,
+                                    tf.scatter_nd(ordinal_labels,
+                                                  tf.subtract(phi, cos_theta_i),
+                                                  tf.shape(cos_theta, out_type=tf.int32)))
+        updated_cos_theta = fs * cos_theta + fa * cos_theta_asoftmax
+
+        if "asoftmax_norm" in params.dict and params.asoftmax_norm:
+            updated_logits = params.asoftmax_s * updated_cos_theta
+        else:
+            # ||x|| * Phi(theta, m)
+            updated_logits = norm * updated_cos_theta
+
         loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=updated_logits)
         return loss
+
+
+def additive_margin_softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
+    """Additive margin softmax.
+    link: https://arxiv.org/abs/1801.05599
+    ref: https://github.com/Joker316701882/Additive-Margin-Softmax
+
+    Args:
+        features: A tensor with shape [batch, dim].
+        labels: A tensor with shape [batch].
+        num_outputs: The number of classes.
+        params: params.weight_l2_regularizer: the L2 regularization.
+                params.amsoftmax_m: the margin. (0.25-0.5)
+                params.amsoftmax_norm, params.amsoftmax_s: If amsoftmax_norm is True, amsoftmax_s must be specified.
+                                                         This means we normalize the length of the features, and do the
+                                                         scaling on the cosine similarity.
+        is_training: Not used in this case.
+        reuse_variables: Reuse variables.
+    """
+    weight_l2_regularizer = params.weight_l2_regularizer
+    if "output_weight_l2_regularizer" in params.dict:
+        weight_l2_regularizer = params.output_weight_l2_regularizer
+    with tf.variable_scope("softmax", reuse=reuse_variables):
+        w = tf.get_variable("output/kernel", [shape_list(features)[1], num_outputs], dtype=tf.float32,
+                            initializer=tf.contrib.layers.xavier_initializer(),
+                            regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
+        norm = tf.norm(features, axis=1, keep_dims=True)
+        features = tf.nn.l2_normalize(features, axis=1)
+        w_norm = tf.nn.l2_normalize(w, axis=0)
+        cos_theta = tf.matmul(features, w_norm)
+        cos_theta = tf.clip_by_value(cos_theta, -1, 1)  # for numerical steady
+        phi = cos_theta - params.amsoftmax_m
+        labels_onehot = tf.one_hot(labels, num_outputs, 1, 0, dtype=tf.int32)
+
+        if "amsoftmax_norm" in params.dict and params.amsoftmax_norm:
+            assert "amsoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
+            # s * (cos(theta) - m)
+            logits_amsoftmax = params.amsoftmax_s * tf.where(tf.equal(labels_onehot, 1), phi, cos_theta)
+        else:
+            logits_amsoftmax = norm * tf.where(tf.equal(labels_onehot, 1), phi, cos_theta)
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_amsoftmax)
+        return loss
+
+
+# def ring_loss(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
+
+
+def additive_angular_margin_softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
+    """Additive angular margin softmax (ArcFace)
+    link: https://arxiv.org/abs/1801.07698
+
+    Args:
+        features: A tensor with shape [batch, dim].
+        labels: A tensor with shape [batch].
+        num_outputs: The number of classes.
+        params: params.weight_l2_regularizer: the L2 regularization.
+                params.arcsoftmax_m: the angular margin (0.4-0.55)
+                params.arcsoftmax_norm, params.arcsoftmax_s: If arcsoftmax_norm is True, arcsoftmax_s must be specified.
+                                                         This means we normalize the length of the features, and do the
+                                                         scaling on the cosine similarity.
+        is_training: Not used in this case.
+        reuse_variables: Reuse variables.
+    """
+    weight_l2_regularizer = params.weight_l2_regularizer
+    if "output_weight_l2_regularizer" in params.dict:
+        weight_l2_regularizer = params.output_weight_l2_regularizer
+    with tf.variable_scope("softmax", reuse=reuse_variables):
+        w = tf.get_variable("output/kernel", [shape_list(features)[1], num_outputs], dtype=tf.float32,
+                            initializer=tf.contrib.layers.xavier_initializer(),
+                            regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
+        norm = tf.norm(features, axis=1, keep_dims=True)
+        features = tf.nn.l2_normalize(features, axis=1)
+        w_norm = tf.nn.l2_normalize(w, axis=0)
+
+        cos_theta = tf.matmul(features, w_norm)
+        cos_theta = tf.clip_by_value(cos_theta, -1, 1)
+
+        ordinal = tf.to_int32(tf.range(shape_list(features)[0]))
+        ordinal_labels = tf.stack([ordinal, labels], axis=1)
+        # The angle between x and the target w_i.
+        cos_theta_i = tf.gather_nd(cos_theta, ordinal_labels)
+
+        # Since 0 < theta < pi, sin(theta) > 0. sin(theta) = sqrt(1 - cos(theta)^2)
+        # cos(theta + m) = cos(theta)cos(m) - sin(theta)sin(m)
+        sin_theta_i_sq = 1 - tf.square(cos_theta_i)
+        mask = tf.to_float(tf.less(sin_theta_i_sq, 1e-16))
+        sin_theta_i = tf.sqrt(sin_theta_i_sq + mask * 1e-16) * (1 - mask)
+        cos_theta_plus_m_i = cos_theta_i * tf.cos(params.arcsoftmax_m) - sin_theta_i * tf.sin(params.arcsoftmax_m)
+
+        # Since theta \in [0, pi], theta > pi + m means cos(theta) < cos(pi+m)
+        # If theta < pi - m, Phi(theta) = cos(theta + m).
+        # If theta > pi + m, Phi(theta) = -cos(theta + m) - 2
+        phi = tf.where(tf.greater(cos_theta_i, tf.cos(np.pi + params.arcsoftmax_m)),
+                       cos_theta_plus_m_i,
+                       -cos_theta_plus_m_i - 2)
+
+        cos_arcsoftmax = tf.add(cos_theta,
+                                tf.scatter_nd(ordinal_labels,
+                                              phi - cos_theta_i, tf.shape(cos_theta, out_type=tf.int32)))
+
+        if "arcsoftmax_norm" in params.dict and params.arcsoftmax_norm:
+            assert "arcsoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
+            # s * (cos(theta) - m)
+            logits_arcsoftmax = params.arcsoftmax_s * cos_arcsoftmax
+        else:
+            logits_arcsoftmax = norm * cos_arcsoftmax
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_arcsoftmax)
+        return loss
+
 
 def test_loss(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
     """This is used to test a new loss. """

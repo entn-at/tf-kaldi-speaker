@@ -21,9 +21,30 @@ def shape_list(x):
     return ret
 
 
+def prelu(x, name="prelu", shared=True):
+    """Parametric ReLU
+
+    Args:
+        x: the input tensor.
+        name: the name of this operation.
+        shared: use a shared alpha for all channels.
+    """
+    alpha_size = 1 if shared else x.get_shape()[-1]
+    with tf.variable_scope(name):
+        alpha = tf.get_variable('alpha', alpha_size,
+                               initializer=tf.constant_initializer(0.01),
+                               dtype=tf.float32)
+        pos = tf.nn.relu(x)
+        neg = alpha * (x - abs(x)) * 0.5
+    return pos + neg
+
+
 def l2_normalize(x):
     """Normalize the last dimension vector of the input matrix"""
-    return x / tf.sqrt(tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True) + 1e-16)
+    l2 = tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True)
+    mask = tf.to_float(tf.less(l2, 1e-16))
+    norm = tf.sqrt(l2 + mask * 1e-16)
+    return x / norm
 
 
 def pairwise_euc_distances(embeddings, squared=False):

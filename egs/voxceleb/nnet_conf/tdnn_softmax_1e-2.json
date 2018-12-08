@@ -1,6 +1,5 @@
 {
-  "TODO": "We may add some hierarchical structure to make the json more readable.",
-  "tunable": "learning_rate, momentum, batch_size, weight_l2_regularizer and clip_gradient",
+  "Note": "If the weight decay is 1e-2, the vinilla SGD (0.01) should be used. If momentum=0.9, the learning rate should reduce to 0.001!",
 
   "seed": 0,
   "network_type": "tdnn",
@@ -11,7 +10,9 @@
   "embedding_node": "tdnn6_dense",
 
   "learning_rate": 0.01,
-  "momentum": 0.9,
+
+  "Options": "learning_rate=0.001, momentum=0.9, optimizer=momentum",
+
   "use_nesterov": false,
   "clip_gradient": false,
   "clip_gradient_norm": 3,
@@ -25,7 +26,7 @@
   "show_training_progress": 100,
   "keep_checkpoint_max": 100,
   "save_summary_steps": 500,
-  "save_checkpoints_steps": 5000,
+  "save_checkpoints_steps": 10000,
   "valid_max_iterations": 1000,
 
   "num_parallel_datasets": 16,
@@ -33,5 +34,8 @@
   "num_speakers_per_batch": 64,
   "num_segments_per_speaker": 1,
   "min_segment_len": 200,
-  "max_segment_len": 400
+  "max_segment_len": 400,
+
+  "early_stop_epochs": 5,
+  "min_learning_rate": 1e-5
 }

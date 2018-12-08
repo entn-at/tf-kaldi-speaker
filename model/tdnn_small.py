@@ -1,5 +1,6 @@
 import tensorflow as tf
 from model.pooling import statistics_pooling
+from model.common import prelu
 from collections import OrderedDict
 
 
@@ -17,8 +18,14 @@ def tdnn_small(features, params, is_training=None, reuse_variables=None):
         endpoints: An OrderedDict containing output of every components. The outputs are in the order that they add to
                    the network. Thus it is convenient to split the network by a output name
     """
+    # PReLU is added.
+    relu = tf.nn.relu
+    if "network_relu_type" in params.dict:
+        if params.network_relu_type == "prelu":
+            relu = prelu
+
     endpoints = OrderedDict()
-    with tf.variable_scope("tdnn_small", reuse=reuse_variables):
+    with tf.variable_scope("tdnn", reuse=reuse_variables):
         # Convert to [b, 1, l, d]
         features = tf.expand_dims(features, 1)
 
@@ -36,7 +43,7 @@ def tdnn_small(features, params, is_training=None, reuse_variables=None):
                                                  training=is_training,
                                                  name="tdnn1_bn")
         endpoints["tdnn1_bn"] = features
-        features = tf.nn.relu(features, name='tdnn1_relu')
+        features = relu(features, name='tdnn1_relu')
         endpoints["tdnn1_relu"] = features
 
         # Layer 2: [-2, -1, 0, 1, 2] --> [b ,1, l-4, 512]
@@ -54,7 +61,7 @@ def tdnn_small(features, params, is_training=None, reuse_variables=None):
                                                  training=is_training,
                                                  name="tdnn2_bn")
         endpoints["tdnn2_bn"] = features
-        features = tf.nn.relu(features, name='tdnn2_relu')
+        features = relu(features, name='tdnn2_relu')
         endpoints["tdnn2_relu"] = features
 
         # Convert to [b, l, 512]
@@ -76,7 +83,7 @@ def tdnn_small(features, params, is_training=None, reuse_variables=None):
                                                  training=is_training,
                                                  name="tdnn5_bn")
         endpoints["tdnn5_bn"] = features
-        features = tf.nn.relu(features, name='tdnn5_relu')
+        features = relu(features, name='tdnn5_relu')
         endpoints["tdnn5_relu"] = features
 
         # Statistics pooling
@@ -98,15 +105,15 @@ def tdnn_small(features, params, is_training=None, reuse_variables=None):
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name='tdnn7_dense')
         endpoints['tdnn7_dense'] = features
+        features = tf.layers.batch_normalization(features,
+                                                 momentum=params.batchnorm_momentum,
+                                                 training=is_training,
+                                                 name="tdnn7_bn")
+        endpoints["tdnn7_bn"] = features
 
         if not params.last_layer_linear:
             # If the last layer is linear, no further activation is needed.
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="tdnn7_bn")
-            endpoints["tdnn7_bn"] = features
-            features = tf.nn.relu(features, name='tdnn7_relu')
+            features = relu(features, name='tdnn7_relu')
             endpoints["tdnn7_relu"] = features
 
     return features, endpoints

@@ -27,7 +27,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
         ge2e_type: "softmax" or "contrastive"
     :return: The loss value.
     """
-    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     class_index = []
     label2class = {}
     for l in labels:
@@ -47,6 +47,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
             centers[i, :] += embeddings[j, :]
             n_class_samples += 1
         centers[i, :] /= n_class_samples
+        centers /= np.sqrt(np.sum(centers ** 2, axis=1, keepdims=True) + 1e-16)
 
     for i in range(n_samples):
         for j in range(n_classes):
@@ -58,6 +59,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
                         continue
                     center_exclusive += embeddings[k, :]
                     n_exclusive_samples += 1
+                center_exclusive /= np.sqrt(np.sum(center_exclusive ** 2, axis=1, keepdims=True) + 1e-16)
                 sim[i, j] = w * compute_cos(embeddings[i, :], center_exclusive / (n_exclusive_samples + 1e-16)) + b
             else:
                 sim[i, j] = w * compute_cos(embeddings[i, :], centers[j, :]) + b
@@ -65,20 +67,11 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
     n_samples, n_classes = sim.shape
     loss = 0
 
-    # Find single points
-    class2count = {}
-    for i in class_index:
-        if i not in class2count:
-            class2count[i] = 0
-        class2count[i] += 1
-
-    cnt = 0
     if ge2e_type == "softmax":
         s = softmax(sim)
         for i in range(n_samples):
             loss -= np.log(s[i, class_index[i]])
             # loss -= sim[i, class_index[i]] - np.log(np.sum(np.exp(sim[i, :])) + 1e-16)
-            cnt += 1
     else:
         for i in range(n_samples):
             other = [0]
@@ -88,8 +81,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
                 other.append(sigmoid(sim[i, j]))
             other = sorted(other)
             loss += 1 - sigmoid(sim[i, class_index[i]]) + other[-1]
-            cnt += 1
-    return loss / cnt
+    return loss / n_samples
 
 
 def pairwise_euc_distances_np(feature, squared=False):
@@ -158,3 +150,63 @@ def compute_triplet_loss(embeddings, labels, margin, squared):
                 loss_np += loss
                 num_positives_np += 1
     return loss_np / num_positives_np
+
+def compute_asoftmax(embeddings, labels, params, w):
+    """Compute the angular-softmax loss. This is used to check the tf implementation in loss.py
+
+        Args:
+            embeddings: The input features.
+            labels: The labels.
+            params: some parameters used in asoftmax.
+            w: the weight matrix of W
+        :return: The triplet loss
+    """
+    prod = np.dot(embeddings, w)
+    prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True))
+    n = embeddings.shape[0]
+
+    if params.asoftmax_m == 1:
+        prob = softmax(prod)
+        loss = 0
+        for i in range(n):
+            loss -= np.log(prob[i, labels[i]])
+        return loss / n
+
+    lamb = max(params.asoftmax_lambda_min, params.asoftmax_lambda_base * (1.0 + params.asoftmax_lambda_gamma * params.global_step) ** (-params.asoftmax_lambda_power))
+    fa = 1.0 / (1.0 + lamb)
+    fs = 1.0 - fa
+
+    prod /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    if params.asoftmax_m == 2:
+        for i in range(n):
+            if prod[i, labels[i]] > 0:
+                k = 0
+            else:
+                k = 1
+            prod[i, labels[i]] = ((-1) ** k) * (np.cos(2 * np.arccos(prod[i, labels[i]]))) - 2 * k
+        prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+        prob = softmax(prod)
+        loss = 0
+        for i in range(n):
+            loss -= np.log(prob[i, labels[i]])
+        return loss / n
+
+    assert params.asoftmax_m == 4
+    for i in range(n):
+        l = np.cos(2 * np.arccos(prod[i, labels[i]]))
+        if prod[i, labels[i]] > 0 and l > 0:
+            k = 0
+        elif prod[i, labels[i]] > 0 and l < 0:
+            k = 1
+        elif prod[i, labels[i]] < 0 and l < 0:
+            k = 2
+        else:
+            k = 3
+        prod[i, labels[i]] = fa * (((-1) ** k) * (np.cos(4 * np.arccos(prod[i, labels[i]]))) - 2 * k) + fs * prod[i, labels[i]]
+    prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    prob = softmax(prod)
+    loss = 0
+    for i in range(n):
+        loss -= np.log(prob[i, labels[i]])
+    return loss / n
+

@@ -23,7 +23,7 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=7
+stage=8
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
@@ -209,71 +209,37 @@ if [ $stage -le 6 ]; then
 fi
 
 if [ $stage -le 7 ]; then
-# Training a softmax network
-#nnetdir=$exp/xvector_nnet_tdnn_softmax_1
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1.json \
+## Training a softmax network
+#nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_1e-2.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-#nnetdir=$exp/xvector_nnet_tdnn_softmax_2
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_2.json \
+
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_1e-2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_1.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-#nnetdir=$exp/xvector_nnet_tdnn_softmax_3
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_softmax_3.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $nnetdir
-
-## Training a GE2E network
-#nnetdir=$exp/xvector_nnet_ge2e_softmax
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
-#    $nnetdir
-
-#nnetdir=$exp/xvector_nnet_ge2e_softmax_3
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e_3.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
-#    $nnetdir
-
-#nnetdir=$exp/xvector_nnet_ge2e_softmax_2
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_ge2e_2.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
-#    $nnetdir
-#
-#nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_1
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_1.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
-#    $nnetdir
-
-#nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_2
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_2.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
-#    $nnetdir
-
-nnetdir=$exp/xvector_nnet_tdnn_small_ge2e_softmax_3
-nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_small_ge2e_3.json \
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_1e-4
+nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_2.json \
     $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-    $data2/voxceleb_train_combined_no_sil/end2end_valid $data2/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
     $nnetdir
+
+exit 1
 echo
 fi
 
 
-nnetdir=$exp/xvector_nnet_ge2e_softmax
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1
 checkpoint=-1
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 200 --use-gpu false --checkpoint $checkpoint --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 100 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data2/voxceleb_train $nnetdir/xvectors_voxceleb_train
 
@@ -342,32 +308,6 @@ if [ $stage -le 11 ]; then
   # EER: 5.329%
   # minDCF(p-target=0.01): 0.4933
   # minDCF(p-target=0.001): 0.6168
-
-  # tdnn+softmax 1 final step:
-  # EER: 3.001%
-  # minDCF(p-target=0.01): 0.3053
-  # minDCF(p-target=0.001): 0.5150
-  #
-  # tdnn+softmax 1 step 950k (before lr < 1e-5)
-  # EER: 3.001%
-  # minDCF(p-target=0.01): 0.3071
-  # minDCF(p-target=0.001): 0.5173
-  #
-  # tdnn+softmax 2 final step:
-  # EER: 3.34%
-  # minDCF(p-target=0.01): 0.3507
-  # minDCF(p-target=0.001): 0.6197
-  #
-  # tdnn+softmax 3 final step:
-  # EER: 3.282%
-  # minDCF(p-target=0.01): 0.3640
-  # minDCF(p-target=0.001): 0.5182
-  #
-  # tdnn+softmax 4 final step:
-  # EER: 2.381%
-  # minDCF(p-target=0.01): 0.2431
-  # minDCF(p-target=0.001): 0.3865
 fi
-
 
 

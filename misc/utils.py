@@ -56,48 +56,91 @@ class ParamsPlain():
         return self.__dict__
 
 
-def save_codes_and_config(args):
+def save_codes_and_config(cont, model, config):
     """Save the codes and configuration file.
 
     During the training, we may modify the codes. It will be problematic when we try to extract embeddings using the old
     model and the new code. So we save the codes when we train the model and use the saved codes to extract embeddings.
 
     Args:
-        args: the arguments parsed from argparse
+        cont: bool, continue training.
+        model: the entire model directory (including nnet/).
+        config: the config file.
     :return: A structure params.
     """
-    if args.cont:
+    if cont:
         # If we want to continue the model training, we need to check the existence of the checkpoint.
-        if not os.path.isdir(os.path.join(args.model, "nnet")) or not os.path.isdir(os.path.join(args.model, "codes")):
-            sys.exit("To continue training the model, nnet and codes must be existed in %s." % args.model)
+        if not os.path.isdir(os.path.join(model, "nnet")) or not os.path.isdir(os.path.join(model, "codes")):
+            sys.exit("To continue training the model, nnet and codes must be existed in %s." % model)
         # Simply load the configuration from the saved model.
-        tf.logging.info("Continue training from %s." % args.model)
-        params = Params(os.path.join(args.model, "nnet/config.json"))
+        tf.logging.info("Continue training from %s." % model)
+        params = Params(os.path.join(model, "nnet/config.json"))
     else:
         # Save the codes in the model directory so that it is more convenient to extract the embeddings.
         # The codes would be changed when we extract the embeddings, making the network loading impossible.
         # When we want to extract the embeddings, we should use the code in `model/codes/...`
-        if os.path.isdir(os.path.join(args.model, "nnet")):
+        if os.path.isdir(os.path.join(model, "nnet")):
             # Backup the codes and configuration in .backup. Keep the model unchanged.
-            tf.logging.info("Save backup to %s" % os.path.join(args.model, ".backup"))
-            if os.path.isdir(os.path.join(args.model, ".backup")):
-                tf.logging.warn("The dir %s exisits. Delete it and continue." % os.path.join(args.model, ".backup"))
-                shutil.rmtree(os.path.join(args.model, ".backup"))
-            os.makedirs(os.path.join(args.model, ".backup"))
-            shutil.move(os.path.join(args.model, "codes"), os.path.join(args.model, ".backup/"))
-            shutil.move(os.path.join(args.model, "nnet"), os.path.join(args.model, ".backup/"))
+            tf.logging.info("Save backup to %s" % os.path.join(model, ".backup"))
+            if os.path.isdir(os.path.join(model, ".backup")):
+                tf.logging.warn("The dir %s exisits. Delete it and continue." % os.path.join(model, ".backup"))
+                shutil.rmtree(os.path.join(model, ".backup"))
+            os.makedirs(os.path.join(model, ".backup"))
+            shutil.move(os.path.join(model, "codes"), os.path.join(model, ".backup/"))
+            shutil.move(os.path.join(model, "nnet"), os.path.join(model, ".backup/"))
 
         # `model/codes` is used to save the codes and `model/nnet` is used to save the model and configuration
-        os.makedirs(os.path.join(args.model, "codes"))
-        copy_tree("../../dataset/", os.path.join(args.model, "codes/dataset/"))
-        copy_tree("../../model/", os.path.join(args.model, "codes/model/"))
-        copy_tree("../../misc", os.path.join(args.model, "codes/misc/"))
-        if not os.path.isdir(os.path.join(args.model, "nnet")):
-            os.makedirs(os.path.join(args.model, "nnet"))
-        shutil.copyfile(args.config, os.path.join(args.model, "nnet", "config.json"))
+        os.makedirs(os.path.join(model, "codes"))
+        copy_tree("../../dataset/", os.path.join(model, "codes/dataset/"))
+        copy_tree("../../model/", os.path.join(model, "codes/model/"))
+        copy_tree("../../misc", os.path.join(model, "codes/misc/"))
+        if not os.path.isdir(os.path.join(model, "nnet")):
+            os.makedirs(os.path.join(model, "nnet"))
+        shutil.copyfile(config, os.path.join(model, "nnet", "config.json"))
         tf.logging.info("Train the model from scratch.")
-        params = Params(args.config)
+        params = Params(config)
     return params
+
+
+def get_pretrain_model(checkpoint, pretrain_model, target_model):
+    """Get the pre-trained model and copy to the target model as the initial version.
+
+        Note: After the copy, the checkpoint becomes 0.
+    Args:
+        checkpoint: The checkpoint in the pre-trained model directory.
+        pretrain_model: The pre-trained model directory.
+        target_model: The target model directory.
+    """
+    if not os.path.isfile(os.path.join(pretrain_model, "checkpoint")):
+        sys.exit("[ERROR] Cannot find checkpoint in %s." % pretrain_model)
+    ckpt = tf.train.get_checkpoint_state(pretrain_model)
+
+    model_checkpoint_path = ckpt.model_checkpoint_path
+    all_model_checkpoint_paths = ckpt.all_model_checkpoint_paths
+
+    if not ckpt or not model_checkpoint_path:
+        sys.exit("[ERROR] Cannot read checkpoint %s." % os.path.join(pretrain_model, "checkpoint"))
+
+    steps = [int(c.rsplit('-', 1)[1]) for c in all_model_checkpoint_paths]
+    steps = sorted(steps)
+    if checkpoint == -1:
+        checkpoint = steps[-1]
+    assert checkpoint in steps, "The checkpoint %d not in the model directory" % checkpoint
+
+    pretrain_model_checkpoint_path = model_checkpoint_path.rsplit("-", 1)[0] + "-" + str(checkpoint)
+    import glob
+    for filename in glob.glob(pretrain_model_checkpoint_path + "*"):
+        bas = os.path.basename(filename).split("-", 1)[0]
+        ext = os.path.basename(filename).rsplit(".", 1)[1]
+        shutil.copyfile(filename, os.path.join(target_model, bas + "-0." + ext))
+
+    # Copy the checkpoint file and the model to the target directory.
+    shutil.copyfile(os.path.join(pretrain_model, "checkpoint"), os.path.join(target_model, "checkpoint"))
+
+    with open(os.path.join(target_model, "checkpoint"), "w") as f:
+        f.write("model_checkpoint_path: \"%s\"\n" % os.path.join(target_model, os.path.basename(model_checkpoint_path).rsplit("-", 1)[0] + "-0"))
+        f.write("all_model_checkpoint_paths: \"%s\"\n" % os.path.join(target_model, os.path.basename(model_checkpoint_path).rsplit("-", 1)[0] + "-0"))
+    return
 
 
 class ValidLoss():
@@ -122,7 +165,7 @@ def load_valid_loss(filename):
     min_loss = ValidLoss()
     with open(filename, "r") as f:
         for line in f.readlines():
-            epoch, loss = line.strip().split(" ")
+            epoch, loss = line.strip().split(" ")[:2]
             epoch = int(epoch)
             loss = float(loss)
             if loss < min_loss.min_loss:
@@ -157,11 +200,13 @@ def get_checkpoint(model, checkpoint=-1):
     assert checkpoint in steps, "The checkpoint %d not in the model directory" % checkpoint
 
     model_checkpoint_path = model_checkpoint_path.rsplit("-", 1)[0] + "-" + str(checkpoint)
+    model_checkpoint_path = os.path.join(model, os.path.basename(model_checkpoint_path))
 
     with open(os.path.join(model, "checkpoint"), "w") as f:
         f.write("model_checkpoint_path: \"%s\"\n" % model_checkpoint_path)
         for checkpoint in all_model_checkpoint_paths:
-            f.write("all_model_checkpoint_paths: \"%s\"\n" % checkpoint)
+            checkpoint_new = os.path.join(model, os.path.basename(checkpoint))
+            f.write("all_model_checkpoint_paths: \"%s\"\n" % checkpoint_new)
     return model_checkpoint_path
 
 
@@ -208,3 +253,19 @@ def compute_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
             else:
                 f.write("%f nontarget" % scores[i])
     return eer
+
+
+def substring_in_list(s, varlist):
+    """Check whether part of the string s appears in the list.
+
+    Args:
+        s: A string
+        varlist: A list. Some elements may be the sub-string of s.
+    :return: Bool. Is a element in the varlist is the substring of s?
+    """
+    is_sub = False
+    for v in varlist:
+        if v in s:
+            is_sub = True
+            break
+    return is_sub

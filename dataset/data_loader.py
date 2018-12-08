@@ -179,7 +179,8 @@ def batch_random(stop_event,
                  num_segments=10,
                  min_len=200,
                  max_len=400,
-                 shuffle=True):
+                 shuffle=True,
+                 seed=0):
     """Load features and fill a queue. Used in KaldiDataRandomQueue
 
     Args:
@@ -193,7 +194,17 @@ def batch_random(stop_event,
         min_len: The minimum length of the features.
         max_len: The maximum length of the features.
         shuffle: Load the feature from the 0-th frame or a random frame.
+        seed: The value used to generate the random seed.
     """
+    # TODO: If you use numpy.random in the sub-process, it is better to use:
+    # local_state = np.random.RandomState(seed)
+    # print local_state.uniform(0, 1, 5)
+    #
+    # The re-seed is necessary if numpy.random is used
+    # You can use os.urandom to generate the `random` seed.
+    rd = random.Random(os.urandom(4))
+    rd.jumpahead(seed)
+
     feature_reader = FeatureReader(data)
     speakers = list(spk2features.keys())
     if num_total_speakers < num_speakers:
@@ -201,8 +212,8 @@ def batch_random(stop_event,
             "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
         speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
     while not stop_event.is_set():
-        batch_speakers = random.sample(speakers, num_speakers)
-        batch_length = random.randint(min_len, max_len)
+        batch_speakers = rd.sample(speakers, num_speakers)
+        batch_length = rd.randint(min_len, max_len)
         features = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
         for i, speaker in enumerate(batch_speakers):
@@ -211,7 +222,7 @@ def batch_random(stop_event,
             if len(feature_list) < num_segments:
                 feature_list *= (int(num_segments / len(feature_list)) + 1)
             # Now the length of the list must be greater than the sample size.
-            speaker_features = random.sample(feature_list, num_segments)
+            speaker_features = rd.sample(feature_list, num_segments)
             for j, feat in enumerate(speaker_features):
                 features[i * num_segments + j, :, :] = feature_reader.read(feat, batch_length, shuffle=shuffle)
         queue.put((features, labels))
@@ -305,8 +316,9 @@ class KaldiDataRandomQueue():
                                                              self.num_segments,
                                                              self.min_len,
                                                              self.max_len,
-                                                             self.shuffle))
-                          for _ in xrange(self.num_parallel_datasets)]
+                                                             self.shuffle,
+                                                             i))
+                          for i in xrange(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
             process.start()
@@ -340,7 +352,8 @@ def batch_sequence(stop_event,
                    batch_size=128,
                    min_len=200,
                    max_len=400,
-                   shuffle=True):
+                   shuffle=True,
+                   seed=0):
     """Load features and fill a queue. Used in KaldiDataSeqQueue.
 
     Args:
@@ -353,11 +366,16 @@ def batch_sequence(stop_event,
         min_len: The minimum length of the features.
         max_len: The maximum length of the features.
         shuffle: Load the feature from the 0-th frame or a random frame.
+        seed: The number is used to generate a random seed
     """
+    # Read the comment in batch_random
+    rd = random.Random(os.urandom(4))
+    rd.jumpahead(seed)
+
     feature_reader = FeatureReader(data)
     num_batches = len(feature_list) / batch_size
     for i in xrange(num_batches):
-        batch_length = random.randint(min_len, max_len)
+        batch_length = rd.randint(min_len, max_len)
         features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((batch_size), dtype=np.int32)
         for j in xrange(batch_size):
@@ -450,7 +468,8 @@ class KaldiDataSeqQueue():
                                                                self.batch_size,
                                                                self.min_len,
                                                                self.max_len,
-                                                               self.shuffle))
+                                                               self.shuffle,
+                                                               i))
                           for i in xrange(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
