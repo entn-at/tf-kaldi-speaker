@@ -11,6 +11,6 @@ My website: yiliu.org.cn
 
 ===========================
 
-Other project I use:
+Projects I use:
 
 https://github.com/vesis84/kaldi-io-for-python

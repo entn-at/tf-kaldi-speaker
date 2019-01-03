@@ -8,7 +8,7 @@ chunk_size=10000
 stage=0
 normalize=false
 checkpoint=-1
-env=tensorflow_env
+env=tf_env
 
 echo "$0 $@"
 
@@ -48,22 +48,23 @@ feat="ark:apply-cmvn-sliding --norm-vars=false --center=true --cmn-window=300 sc
 # If no conda is used, simply set "--use-env false"
 if [ $stage -le 0 ]; then
   echo "$0: extracting xvectors from nnet"
+
   # Set the checkpoint.
-  source activate $env
+  source $HOME/$env/bin/activate
   unset PYTHONPATH
-  export PYTHONPATH=`pwd`/../../:$PYTHONPATH
   export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
+  export PYTHONPATH=`pwd`/../../:$PYTHONPATH
   python nnet/lib/make_checkpoint.py --checkpoint $checkpoint "$nnetdir"
-  source deactivate
+  deactivate
 
   if $use_gpu; then
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --use-env false --gpuid JOB --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
-        $env "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
+      nnet/wrap/extract_wrapper.sh --gpuid JOB --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   else
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --gpuid -1 --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
-        $env "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
+      nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   fi
 fi
 
@@ -85,5 +86,14 @@ if [ $stage -le 2 ]; then
     $cmd $dir/log/speaker_mean.log \
       ivector-mean ark:$data/spk2utt scp:$dir/xvector.scp \
         ark,scp:$dir/spk_xvector.ark,$dir/spk_xvector.scp ark,t:$dir/num_utts.ark || exit 1;
+  fi
+fi
+
+if [ $stage -le 3 ]; then
+  if $normalize; then
+    # Normalize the output embeddings
+    cp $dir/xvector.scp $dir/xvector_before_norm.scp
+    $cmd $dir/log/length_norm.log \
+      ivector-normalize-length --scaleup=false scp:$dir/xvector_before_norm.scp ark,scp:$dir/xvector.ark,$dir/xvector.scp
   fi
 fi

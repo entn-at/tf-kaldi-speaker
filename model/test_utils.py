@@ -10,10 +10,11 @@ def sigmoid(x):
     """Sigmoid transform."""
     return 1 / (1 + np.exp(-x))
 
+
 def softmax(x):
     """Compute softmax values for each sets of scores in x."""
-    e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum(axis=-1, keepdims=True)
+    e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+    return e_x / np.maximum(e_x.sum(axis=-1, keepdims=True), 1e-16)
 
 
 def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
@@ -151,6 +152,7 @@ def compute_triplet_loss(embeddings, labels, margin, squared):
                 num_positives_np += 1
     return loss_np / num_positives_np
 
+
 def compute_asoftmax(embeddings, labels, params, w):
     """Compute the angular-softmax loss. This is used to check the tf implementation in loss.py
 
@@ -159,13 +161,16 @@ def compute_asoftmax(embeddings, labels, params, w):
             labels: The labels.
             params: some parameters used in asoftmax.
             w: the weight matrix of W
-        :return: The triplet loss
+        :return: The angular loss
     """
+    embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     prod = np.dot(embeddings, w)
-    prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True))
+    prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
     n = embeddings.shape[0]
 
     if params.asoftmax_m == 1:
+        if params.asoftmax_norm:
+            prod = params.asoftmax_s * (prod / embeddings_norm)
         prob = softmax(prod)
         loss = 0
         for i in range(n):
@@ -176,19 +181,23 @@ def compute_asoftmax(embeddings, labels, params, w):
     fa = 1.0 / (1.0 + lamb)
     fs = 1.0 - fa
 
-    prod /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    prod /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
+    prod = np.minimum(np.maximum(prod, -1), 1)
     if params.asoftmax_m == 2:
         for i in range(n):
             if prod[i, labels[i]] > 0:
                 k = 0
             else:
                 k = 1
-            prod[i, labels[i]] = ((-1) ** k) * (np.cos(2 * np.arccos(prod[i, labels[i]]))) - 2 * k
-        prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+            prod[i, labels[i]] = fa * (((-1) ** k) * (np.cos(2 * np.arccos(prod[i, labels[i]]))) - 2 * k) + fs * prod[i, labels[i]]
+        if params.asoftmax_norm:
+            prod *= params.asoftmax_s
+        else:
+            prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
         prob = softmax(prod)
         loss = 0
         for i in range(n):
-            loss -= np.log(prob[i, labels[i]])
+            loss -= np.log(prob[i, labels[i]] + 1e-16)
         return loss / n
 
     assert params.asoftmax_m == 4
@@ -203,10 +212,79 @@ def compute_asoftmax(embeddings, labels, params, w):
         else:
             k = 3
         prod[i, labels[i]] = fa * (((-1) ** k) * (np.cos(4 * np.arccos(prod[i, labels[i]]))) - 2 * k) + fs * prod[i, labels[i]]
-    prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    if params.asoftmax_norm:
+        prod *= params.asoftmax_s
+    else:
+        prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     prob = softmax(prod)
     loss = 0
     for i in range(n):
-        loss -= np.log(prob[i, labels[i]])
+        loss -= np.log(prob[i, labels[i]] + 1e-16)
+    return loss / n
+
+
+def compute_amsoftmax(embeddings, labels, params, w):
+    """Compute the additive margin softmax loss. This is used to check the tf implementation in loss.py
+
+        Args:
+            embeddings: The input features.
+            labels: The labels.
+            params: some parameters used in asoftmax.
+            w: the weight matrix of W
+        :return: The additive margin loss
+    """
+    embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
+    prod = np.dot(embeddings, w)
+    prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
+    n = embeddings.shape[0]
+    cos_theta = prod / embeddings_norm
+    cos_theta = np.minimum(np.maximum(cos_theta, -1), 1)
+    for i in range(n):
+        cos_theta[i, labels[i]] -= params.amsoftmax_m
+
+    if params.amsoftmax_norm:
+        prod = params.amsoftmax_s * cos_theta
+    else:
+        prod = embeddings_norm * cos_theta
+
+    prob = softmax(prod)
+    loss = 0
+    for i in range(n):
+        loss -= np.log(prob[i, labels[i]]+1e-16)
+    return loss / n
+
+
+def compute_arcsoftmax(embeddings, labels, params, w):
+    """Compute the additive angular margin softmax loss. This is used to check the tf implementation in loss.py
+
+        Args:
+            embeddings: The input features.
+            labels: The labels.
+            params: some parameters used in asoftmax.
+            w: the weight matrix of W
+        :return: The additive angular margin loss
+    """
+    embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
+    prod = np.dot(embeddings, w)
+    prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
+    n = embeddings.shape[0]
+    cos_theta = prod / embeddings_norm
+    cos_theta = np.minimum(np.maximum(cos_theta, -1), 1)
+    for i in range(n):
+        angle = np.arccos(cos_theta[i, labels[i]]) + params.arcsoftmax_m
+        if angle > np.pi:
+            cos_theta[i, labels[i]] = -np.cos(angle) - 2
+        else:
+            cos_theta[i, labels[i]] = np.cos(angle)
+
+    if params.arcsoftmax_norm:
+        prod = params.arcsoftmax_s * cos_theta
+    else:
+        prod = embeddings_norm * cos_theta
+
+    prob = softmax(prod)
+    loss = 0
+    for i in range(n):
+        loss -= np.log(prob[i, labels[i]] + 1e-16)
     return loss / n
 

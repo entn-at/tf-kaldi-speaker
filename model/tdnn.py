@@ -155,7 +155,6 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name='tdnn7_dense')
         endpoints['tdnn7_dense'] = features
-
         # Fix: Do batchnorm no matter whether we do relu.
         features = tf.layers.batch_normalization(features,
                                                  momentum=params.batchnorm_momentum,
@@ -181,42 +180,113 @@ if __name__ == "__main__":
     embeddings = tf.placeholder(tf.float32, shape=[None, num_dim], name="embeddings")
 
     import numpy as np
+    features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
+    features_val[-1, :, :] = 0
+    labels_val = np.random.randint(0, num_labels, size=(num_data,)).astype(np.int32)
+
+    import numpy as np
     from misc.utils import ParamsPlain
     params = ParamsPlain()
     params.dict["weight_l2_regularizer"] = 1e-5
-    params.dict["batchnorm_momentum"] = 0.999
+    params.dict["batchnorm_momentum"] = 0.99
     params.dict["pooling_type"] = "statistics_pooling"
     params.dict["last_layer_linear"] = False
-    params.dict["asoftmax_m"] = 1
+    params.dict["output_weight_l2_regularizer"] = 1e-4
+    params.dict["network_relu_type"] = "prelu"
+
+    # If the norm (s) is too large, after applying the margin, the softmax value would be extremely small
+    params.dict["asoftmax_s"] = 0.1
     params.dict["asoftmax_lambda_min"] = 5
     params.dict["asoftmax_lambda_base"] = 1000
     params.dict["asoftmax_lambda_gamma"] = 1
     params.dict["asoftmax_lambda_power"] = 4
     params.dict["global_step"] = 1
-    params.dict["network_relu_type"] = "prelu"
 
-    # tdnn + asoftmax
-    import pdb
-    pdb.set_trace()
-    outputs, endpoints = tdnn(features, params, is_training=True, reuse_variables=False)
-    from model.loss import asoftmax
-    loss = asoftmax(embeddings, labels, num_labels, params, is_training=True, reuse_variables=False)
-    grads = tf.gradients(loss, embeddings)
+    params.dict["amsoftmax_s"] = 0.1
 
-    features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
-    # The sqrt in the pooling is a dangerous operation, things may go wrong when the variance is zero. Test it
-    features_val[-1, :, :] = 0
-    labels_val = np.random.randint(0, num_labels, size=(num_data,)).astype(np.int32)
-    embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
-    embeddings_val /= 2 * np.sqrt(np.sum(embeddings_val ** 2, axis=1, keepdims=True))
+    params.dict["arcsoftmax_s"] = 0.1
 
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        loss_val, embedding_val = sess.run([loss, outputs], feed_dict={features: features_val,
-                                                                       labels: labels_val})
+    # outputs, endpoints = tdnn(features, params, is_training=True, reuse_variables=False)
+
+    # Test loss functions
+    # It only works on debug mode, since the loss is asked to output weights for our numpy computation.
+    from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
+    from model.test_utils import compute_asoftmax, compute_amsoftmax, compute_arcsoftmax
+
+    print("Asoftmax")
+    for n in [False, True]:
+        params.dict["asoftmax_norm"] = n
+        for m in [1, 2, 4]:
+            params.dict["asoftmax_m"] = m
+            loss = asoftmax(embeddings, labels, num_labels, params, is_training=True, reuse_variables=tf.AUTO_REUSE)
+            grads = tf.gradients(loss, embeddings)
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                w_val = sess.run(params.softmax_w)
+
+                # very large embedding, very small embedding, angle close to 0 and pi
+                # The embedding should not be TOO small, because the normalization will be incorrect.
+                embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+                embeddings_val[-1, :] = 1e-8
+                embeddings_val[0, :] = w_val[:, labels_val[3]] + 1e-5
+                embeddings_val[1, :] = -1 * w_val[:, labels_val[4]] + 1e-5
+                embeddings_val[3, :] = 100 * embeddings_val[0, :]
+                embeddings_val /= 2 * np.sqrt(np.sum(embeddings_val ** 2, axis=1, keepdims=True) + 1e-16)
+
+                loss_np = compute_asoftmax(embeddings_val, labels_val, params, w_val)
+                loss_val, grads_val = sess.run([loss, grads], feed_dict={embeddings: embeddings_val,
+                                                                         labels: labels_val})
+                assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+                assert np.allclose(loss_val, loss_np)
+
+    print("Additive margin softmax")
+    for n in [True, False]:
+        params.dict["amsoftmax_norm"] = n
+        for m in [0, 0.1, 0.5]:
+            params.dict["amsoftmax_m"] = m
+            loss = additive_margin_softmax(embeddings, labels, num_labels, params, is_training=True, reuse_variables=tf.AUTO_REUSE)
+            grads = tf.gradients(loss, embeddings)
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                w_val = sess.run(params.softmax_w)
+
+                embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+                embeddings_val[-1, :] = 1e-8
+                embeddings_val[0, :] = w_val[:, labels_val[3]] + 1e-5
+                embeddings_val[1, :] = -1 * w_val[:, labels_val[4]] + 1e-5
+                embeddings_val[3, :] = 100 * embeddings_val[0, :]
+                embeddings_val /= 2 * np.sqrt(np.sum(embeddings_val ** 2, axis=1, keepdims=True))
+                loss_np = compute_amsoftmax(embeddings_val, labels_val, params, w_val)
+
+                loss_val, grads_val = sess.run([loss, grads], feed_dict={embeddings: embeddings_val,
+                                                                         labels: labels_val})
+                assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+                assert np.allclose(loss_val, loss_np)
+
+    print("Additive angular margin softmax")
+    for n in [True, False]:
+        params.dict["arcsoftmax_norm"] = n
+        for m in [0, 0.1, 0.5]:
+            params.dict["arcsoftmax_m"] = m
+            loss = additive_angular_margin_softmax(embeddings, labels, num_labels, params, is_training=True, reuse_variables=tf.AUTO_REUSE)
+            grads = tf.gradients(loss, embeddings)
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                w_val = sess.run(params.softmax_w)
+
+                embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+                embeddings_val[0, :] = 100 * embeddings_val[0, :]
+                embeddings_val[-1, :] = 1e-8
+                embeddings_val[3, :] = w_val[:, labels_val[3]] + 1e-5
+                embeddings_val[4, :] = -1 * w_val[:, labels_val[4]] + 1e-5
+                embeddings_val /= 2 * np.sqrt(np.sum(embeddings_val ** 2, axis=1, keepdims=True))
+                loss_np = compute_arcsoftmax(embeddings_val, labels_val, params, w_val)
+
+                loss_val, grads_val = sess.run([loss, grads], feed_dict={embeddings: embeddings_val,
+                                                                         labels: labels_val})
+                assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+                assert np.allclose(loss_val, loss_np)
     quit()
-
-    # very large embedding, very small embedding, angle close to 0 and pi
 
     # tdnn + generalized end2end loss
     from model.loss import ge2e_loss

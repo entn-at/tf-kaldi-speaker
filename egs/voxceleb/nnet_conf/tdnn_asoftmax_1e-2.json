@@ -18,7 +18,7 @@
   "clip_gradient": false,
   "clip_gradient_norm": 3,
 
-  "weight_l2_regularizer": 1e-4,
+  "weight_l2_regularizer": 1e-2,
   "batchnorm_momentum": 0.99,
 
   "num_epochs": 100,
@@ -27,7 +27,7 @@
   "show_training_progress": 100,
   "keep_checkpoint_max": 100,
   "save_summary_steps": 500,
-  "save_checkpoints_steps": 10000,
+  "save_checkpoints_steps": 15000,
   "valid_max_iterations": 1000,
 
   "num_parallel_datasets": 16,

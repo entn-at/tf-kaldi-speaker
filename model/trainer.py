@@ -7,7 +7,8 @@ import numpy as np
 from model.tdnn import tdnn
 from model.tdnn_small import tdnn_small
 from model.test_network import test_network
-from model.loss import softmax, asoftmax, ge2e_loss, triplet_loss, test_loss
+from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
+from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 from misc.utils import substring_in_list
 
@@ -69,6 +70,11 @@ class Trainer():
 
         # The output predictions. Useful in the prediction mode.
         self.embeddings = None
+
+        # The optimizer used in the training.
+        # The total loss is useful if we want to change the gradient or variables to optimize (e.g. in fine-tuning)
+        self.optimizer = None
+        self.total_loss = None
 
         # Training operation. This is called at each step
         self.train_op = None
@@ -180,6 +186,7 @@ class Trainer():
         if mode == "predict":
             self.pred_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="pred_features")
             with tf.name_scope("predict") as scope:
+                tf.logging.info("Extract embedding from node %s" % self.params.embedding_node)
                 # There is no need to do L2 normalization in this function, because we can do the normalization outside,
                 # or simply a cosine similarity can do it.
                 # Note that the output node may be different if we use different loss function. For example, if the
@@ -199,13 +206,15 @@ class Trainer():
             self.global_step = tf.placeholder(tf.int32, name="global_step")
             self.params.dict["global_step"] = self.global_step
 
-        # import pdb
-        # pdb.set_trace()
         self.loss_type = loss_type
         if loss_type == "softmax":
             self.loss_network = softmax
         elif loss_type == "asoftmax":
             self.loss_network = asoftmax
+        elif loss_type == "additive_margin_softmax":
+            self.loss_network = additive_margin_softmax
+        elif loss_type == "additive_angular_margin_softmax":
+            self.loss_network = additive_angular_margin_softmax
         elif loss_type == "ge2e":
             self.loss_network = ge2e_loss
         elif loss_type == "triplet_loss":
@@ -216,26 +225,48 @@ class Trainer():
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
         if mode == "valid":
+            tf.logging.info("Building valid network...")
             self.valid_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="valid_features")
             self.valid_labels = tf.placeholder(tf.int32, shape=[None,], name="valid_labels")
             with tf.name_scope("valid") as scope:
                 # We can adjust some parameters in the config when we do validation
-                valid_params = self.params
+                # TODO: I'm not sure whether it is necssary to change the margin for the valid set.
+                # Change the margin for the valid set.
                 if loss_type == "softmax":
                     pass
                 elif loss_type == "asoftmax":
-                    valid_params.asoftmax_m = 1
+                    train_margin = self.params.asoftmax_m
+                    self.params.asoftmax_m = 1
+                elif loss_type == "additive_margin_softmax":
+                    train_margin = self.params.amsoftmax_m
+                    self.params.amsoftmax_m = 0
+                elif loss_type == "additive_angular_margin_softmax":
+                    train_margin = self.params.arcsoftmax_m
+                    self.params.arcsoftmax_m = 0
                 else:
                     pass
 
-                features, endpoints = self.network(self.valid_features, valid_params, is_training, reuse_variables)
-                valid_loss = self.loss_network(features, self.valid_labels, num_speakers, valid_params, is_training, reuse_variables)
+                features, endpoints = self.network(self.valid_features, self.params, is_training, reuse_variables)
+                valid_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
+
+                # Change the margin back!!!
+                if loss_type == "softmax":
+                    pass
+                elif loss_type == "asoftmax":
+                    self.params.asoftmax_m = train_margin
+                elif loss_type == "additive_margin_softmax":
+                    self.params.amsoftmax_m = train_margin
+                elif loss_type == "additive_angular_margin_softmax":
+                    self.params.arcsoftmax_m = train_margin
+                else:
+                    pass
 
                 # We can evaluate other stuff in the valid_ops. Just add the new values to the dict.
                 # We may also need to check other values expect for the loss. Leave the task to other functions.
                 # So I create the embedding output for the validation set thus we can do lots of things with it.
                 self.embeddings = endpoints[self.params.embedding_node]
 
+                # TODO: add accuracy to the valid path.
                 self.valid_ops["raw_valid_loss"] = valid_loss
                 mean_valid_loss, mean_valid_loss_op = tf.metrics.mean(valid_loss)
                 self.valid_ops["valid_loss"] = mean_valid_loss
@@ -248,6 +279,7 @@ class Trainer():
                     self.valid_summary_writer = tf.summary.FileWriter(os.path.join(self.model, "eval"), self.sess.graph)
             return
 
+        tf.logging.info("Building training network...")
         self.train_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="train_features")
         self.train_labels = tf.placeholder(tf.int32, shape=[None, ], name="train_labels")
         self.learning_rate = tf.placeholder(tf.float32, name="learning_rate")
@@ -268,13 +300,16 @@ class Trainer():
             opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
         else:
             sys.exit("Optimizer %s is not supported." % self.params.optimizer)
+        self.optimizer = opt
 
         # Use name_space here. Create multiple name_spaces if multi-gpus
+        # There is a copy in `set_trainable_variables`
         with tf.name_scope("train") as scope:
             features, endpoints = self.network(self.train_features, self.params, is_training, reuse_variables)
             loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
             regularization_loss = tf.losses.get_regularization_loss()
             total_loss = loss + regularization_loss
+            self.total_loss = total_loss
 
             # train_summary contains all the summeries we want to inspect.
             # Get the summaries define in the network and loss function.
@@ -471,7 +506,7 @@ class Trainer():
         fp_lr.close()
         return
 
-    def finetune(self, exclude_list, data=None, spklist=None, learning_rate=None):
+    def get_finetune_model(self, exclude_list):
         """Start from a pre-trained model and other parameters are initialized using default initializer.
         Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
         we need to fully load the model rather than loading part of the graph.
@@ -544,7 +579,7 @@ class Trainer():
         if output_embeddings:
             # If we want to output embeddings, the features should be loaded in order
             data_loader = KaldiDataSeqQueue(data, spklist,
-                                            num_parallel=2,
+                                            num_parallel=1,
                                             max_qsize=10,
                                             batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
                                             min_len=self.params.min_segment_len,
@@ -638,3 +673,50 @@ class Trainer():
         if rank == 2:
             embeddings = np.squeeze(embeddings, axis=0)
         return embeddings
+
+    def set_trainable_variables(self, variable_list=None):
+        """Set the variables which we want to optimize.
+        The optimizer will only optimize the variables which contain sub-string in the variable list.
+        Basically, this is copied from the training path in `build`.
+
+        The batchnorm statistics can always be updated?
+
+        Args:
+            variable_list: The model variable contains sub-string in the list will be optimized.
+                           If None, all variables will be optimized.
+        """
+        add_train_summary = []
+        variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+        trainable_variables = []
+        if variable_list is None:
+            tf.logging.info("[Info] Add all trainable variables to the optimizer.")
+            trainable_variables = None
+        else:
+            for v in variables:
+                if substring_in_list(v.name, variable_list):
+                    trainable_variables.append(v)
+                    tf.logging.info("[Info] Add %s to trainable list" % v.name)
+
+        with tf.name_scope("train") as scope:
+            grads = self.optimizer.compute_gradients(self.total_loss, var_list=trainable_variables)
+
+        if self.params.clip_gradient:
+            grads, vars = zip(*grads)  # compute gradients of variables with respect to loss
+            grads_clip, _ = tf.clip_by_global_norm(grads, self.params.clip_gradient_norm)  # l2 norm clipping
+            grads = zip(grads_clip, vars)
+
+        # The values and gradients are added to summeries
+        for grad, var in grads:
+            if grad is not None:
+                add_train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+                add_train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
+
+        if variable_list is None:
+            trainable_variables = tf.trainable_variables()
+        for var in trainable_variables:
+            add_train_summary.append(tf.summary.histogram(var.op.name, var))
+        self.train_summary = tf.summary.merge([self.train_summary, tf.summary.merge(add_train_summary)])
+
+        batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
+        with tf.control_dependencies(batchnorm_update_ops):
+            self.train_op = self.optimizer.apply_gradients(grads)

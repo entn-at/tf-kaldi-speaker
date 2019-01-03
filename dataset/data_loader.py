@@ -31,7 +31,7 @@ def get_speaker_info(data, spklist):
     with open(spklist, "r") as f:
         for line in f.readlines():
             spk, index = line.strip().split(" ")
-            spk2index[spk] = index
+            spk2index[spk] = int(index)
 
     utt2spk = {}
     with open(os.path.join(data, "spk2utt"), "r") as f:

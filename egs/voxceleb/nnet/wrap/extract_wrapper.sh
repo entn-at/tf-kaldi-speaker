@@ -1,6 +1,6 @@
 #!/bin/bash
 
-use_env=true
+env=
 gpuid=-1
 min_chunk_size=25
 chunk_size=10000
@@ -9,8 +9,8 @@ normalize=false
 if [ -f path.sh ]; then . ./path.sh; fi
 . parse_options.sh || exit 1;
 
-if [ $# != 4 ]; then
-  echo "Usage: $0 [options] <conda-env> <nnet-dir> <data> <embeddings-dir>"
+if [ $# != 3 ]; then
+  echo "Usage: $0 [options] <nnet-dir> <data> <embeddings-dir>"
   echo "Options:"
   echo "  --gpuid <-1>"
   echo "  --min-chunk-size <25>"
@@ -20,14 +20,14 @@ if [ $# != 4 ]; then
   exit 100
 fi
 
-env=$1
-nnetdir=$2
-feat=$3
-dir=$4
+nnetdir=$1
+feat=$2
+dir=$3
 
-if $use_env; then
+if [ ! -z $env ]; then
   # If conda is used, set the environment and unset the predefined variables.
-  source activate $env
+#  source activate $env
+  source $HOME/$env/bin/activate
   unset PYTHONPATH
   export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
 fi
@@ -37,9 +37,9 @@ if $normalize; then
 fi
 
 # Hardly set the MKL-related variables to make the code run on one cpu.
-export MKL_NUM_THREADS=1
-# export MKL_DOMAIN_NUM_THREADS="MKL_BLAS=1"
-# export OMP_NUM_THREADS=1
+#export MKL_NUM_THREADS=1
+#export MKL_DOMAIN_NUM_THREADS="MKL_BLAS=1"
+#export OMP_NUM_THREADS=1
 # export MKL_DYNAMIC="FALSE"
 # export OMP_DYNAMIC="FALSE"
 

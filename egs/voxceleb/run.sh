@@ -23,12 +23,12 @@ exp=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/exp
 mfccdir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 vaddir=/home/dawna/mgb3/diarization/imports/data/mfc30/mfcc
 
-stage=8
+stage=7
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/dawna/mgb3/transcription/exp-yl695/software/kaldi_cpu/egs/voxceleb
 
-voxceleb1_trials=/home/dawna/mgb3/diarization/imports/data/mfc30/data/voxceleb1_test/trials
+voxceleb1_trials=/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_test/trials
 voxceleb1_root=/home/dawna/mgb3/diarization/imports/voxceleb/voxceleb1
 voxceleb2_root=/home/dawna/mgb3/diarization/imports/voxceleb/voxceleb2
 musan_root=/home/dawna/mgb3/diarization/imports/musan
@@ -217,14 +217,38 @@ if [ $stage -le 7 ]; then
 #    $nnetdir
 
 
-#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_1e-2
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_1.json \
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m4
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_fn_1e-2_s20_m4.json \
 #    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_1e-4
-nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_2.json \
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_linear_m4
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_linear_fn_1e-2_s20_m4.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_1e-2_m2_long
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_1e-2_m2_long.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_1e-2_m4_long
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_1e-2_m4_long.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_linear_m2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_linear_fn_1e-2_s20_m2.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
+
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m2
+nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_fn_1e-2_s20_m2.json \
     $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
     $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
     $nnetdir
@@ -234,12 +258,12 @@ echo
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_1e-2_m2_long
 checkpoint=-1
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 100 --use-gpu false --checkpoint $checkpoint --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 60 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data2/voxceleb_train $nnetdir/xvectors_voxceleb_train
 
@@ -309,5 +333,16 @@ if [ $stage -le 11 ]; then
   # minDCF(p-target=0.01): 0.4933
   # minDCF(p-target=0.001): 0.6168
 fi
+exit 1
 
+if [ $stage -le 12 ]; then
+
+
+  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda) 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
+  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
+  echo "EER: $eer%"
+  echo "minDCF(p-target=0.01): $mindcf1"
+  echo "minDCF(p-target=0.001): $mindcf2"
+fi
 

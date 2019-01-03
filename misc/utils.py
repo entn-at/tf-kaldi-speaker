@@ -212,6 +212,7 @@ def get_checkpoint(model, checkpoint=-1):
 
 def compute_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
     """Compute pairwise EER using cosine similarity.
+    The EER is estimated by interp1d and brentq, so it is not the exact value and may be a little different each time.
 
     Args:
         embeddings: The embeddings.
@@ -263,6 +264,8 @@ def substring_in_list(s, varlist):
         varlist: A list. Some elements may be the sub-string of s.
     :return: Bool. Is a element in the varlist is the substring of s?
     """
+    if varlist is None:
+        return False
     is_sub = False
     for v in varlist:
         if v in s:
