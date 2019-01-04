@@ -241,17 +241,17 @@ if [ $stage -le 7 ]; then
 #    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_linear_m2
-#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_linear_fn_1e-2_s20_m2.json \
-#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
-#    $nnetdir
-
-nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m2
-nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_fn_1e-2_s20_m2.json \
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_linear_m2
+nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_linear_fn_1e-2_s20_m2.json \
     $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
     $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
     $nnetdir
+
+#nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --continue-training false nnet_conf/tdnn_asoftmax_fn_1e-2_s20_m2.json \
+#    $data2/voxceleb_train_combined_no_sil/train $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $data2/voxceleb_train_combined_no_sil/softmax_valid $data2/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
 
 exit 1
 echo

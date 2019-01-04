@@ -1,4 +1,5 @@
 import tensorflow as tf
+from collections import OrderedDict
 
 
 def shape_list(x):
@@ -37,6 +38,20 @@ def prelu(x, name="prelu", shared=True):
         pos = tf.nn.relu(x)
         neg = alpha * (x - abs(x)) * 0.5
     return pos + neg
+
+
+def l2_scaling(x, scaling_factor, epsilon=1e-12):
+    """Feature normalization before re-scaling.
+
+    Args:
+        x: The input features.
+        scaling_factor: The scaling factor.
+    :return: Normalized and re-scaled features.
+    """
+    square_sum = tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True)
+    x_inv_norm = tf.rsqrt(tf.maximum(square_sum, epsilon)) * scaling_factor
+    x_scale = x * x_inv_norm
+    return x_scale
 
 
 def l2_normalize(x):

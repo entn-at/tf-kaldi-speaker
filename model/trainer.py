@@ -4,8 +4,8 @@ import re
 import sys
 import time
 import numpy as np
+from model.common import l2_scaling
 from model.tdnn import tdnn
-from model.tdnn_small import tdnn_small
 from model.test_network import test_network
 from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
@@ -30,8 +30,6 @@ class Trainer():
         self.network_type = params.network_type
         if params.network_type == "tdnn":
             self.network = tdnn
-        elif params.network_type == "tdnn_small":
-            self.network = tdnn_small
         elif params.network_type == "test_network":
             self.network = test_network
         else:
@@ -166,6 +164,26 @@ class Trainer():
         """
         self.saver.save(self.sess, os.path.join(self.model, "model"), global_step=step)
 
+    def entire_network(self, features, params, is_training, reuse_variables):
+        """The definition of the entire network.
+        Sometimes, feature normalization is applied after the main network. We combine them together.
+
+        Args:
+            features: The network input.
+            params: The parameters.
+            is_training: True if the network is for training.
+            reuse_variables: Share variables.
+        :return: The network output and the endpoints (for other usage).
+        """
+        features, endpoints = self.network(features, params, is_training, reuse_variables)
+        # Add more components (post-processing) after the main network.
+        if "feature_norm" in params.dict and params.feature_norm:
+            assert "feature_scaling_factor" in params.dict, "If feature normalization is applied, scaling factor is necessary."
+            features = l2_scaling(features, params.feature_scaling_factor)
+            endpoints["feature_scale"] = features
+
+        return features, endpoints
+
     def build(self, mode, dim, loss_type=None, num_speakers=None):
         """ Build a network.
 
@@ -194,7 +212,7 @@ class Trainer():
                 # used, the output of the last layer may be a better choice. So it is impossible to specify the
                 # embedding node inside the network structure. The configuration will tell the network to output the
                 # correct activations as the embeddings.
-                _, endpoints = self.network(self.pred_features, self.params, is_training, reuse_variables)
+                _, endpoints = self.entire_network(self.pred_features, self.params, is_training, reuse_variables)
                 self.embeddings = endpoints[self.params.embedding_node]
                 if self.saver is None:
                     self.saver = tf.train.Saver()
@@ -246,7 +264,7 @@ class Trainer():
                 else:
                     pass
 
-                features, endpoints = self.network(self.valid_features, self.params, is_training, reuse_variables)
+                features, endpoints = self.entire_network(self.valid_features, self.params, is_training, reuse_variables)
                 valid_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
 
                 # Change the margin back!!!
@@ -305,7 +323,7 @@ class Trainer():
         # Use name_space here. Create multiple name_spaces if multi-gpus
         # There is a copy in `set_trainable_variables`
         with tf.name_scope("train") as scope:
-            features, endpoints = self.network(self.train_features, self.params, is_training, reuse_variables)
+            features, endpoints = self.entire_network(self.train_features, self.params, is_training, reuse_variables)
             loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
             regularization_loss = tf.losses.get_regularization_loss()
             total_loss = loss + regularization_loss

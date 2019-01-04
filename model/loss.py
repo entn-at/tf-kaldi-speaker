@@ -298,24 +298,11 @@ def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_vari
                             regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
         params.dict["softmax_w"] = w
 
-        norm = tf.norm(features, axis=1, keep_dims=True)
-        features_norm = tf.nn.l2_normalize(features, dim=1)
         w_norm = tf.nn.l2_normalize(w, dim=0)
 
-        # cos(theta)
-        cos_theta = tf.matmul(features_norm, w_norm)
-        cos_theta = tf.clip_by_value(cos_theta, -1, 1)
-
-        # Feature normalization and scaling if necessary
-        if "asoftmax_norm" in params.dict and params.asoftmax_norm:
-            assert "asoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
-            params.asoftmax_s = float(params.asoftmax_s)
-            # logits = s * cos(theta)
-            logits = params.asoftmax_s * cos_theta
-            tf.logging.info("Use feature normalization. The scaling factor is %f" % params.asoftmax_s)
-        else:
-            # logits = ||x||*cos(theta)
-            logits = norm * cos_theta
+        # If ||x|| is scaled, ||x|| = s
+        # Then the logits is s*cos(theta), else ||x||cos(theta)
+        logits = tf.matmul(features, w_norm)
 
         tf.logging.info("The margin in the angular softmax is %d" % params.asoftmax_m)
 
@@ -326,10 +313,13 @@ def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_vari
 
         ordinal = tf.to_int32(tf.range(shape_list(features)[0]))
         ordinal_labels = tf.stack([ordinal, labels], axis=1)
-        # The angle between x and the target w_i.
+        sel_logits = tf.gather_nd(logits, ordinal_labels)
 
-        # cos(theta_i), theta_i is the angle between x_i and its target w_i.
-        cos_theta_i = tf.gather_nd(cos_theta, ordinal_labels)
+        # The angle between x and the target w_i.
+        eps = 1e-12
+        features_norm = tf.maximum(tf.norm(features, axis=1), eps)
+        cos_theta_i = tf.div(sel_logits, features_norm)
+        cos_theta_i = tf.clip_by_value(cos_theta_i, -1, 1)  # for numerical steady
 
         # Phi(theta, m) = (-1)^k * cos(2*theta) - 2 * k
         # Phi(theta_i, m) is a monotonical function about theta given m
@@ -345,25 +335,20 @@ def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_vari
         else:
             raise NotImplementedError("[ERROR] m=%d is not unsupported." % params.asoftmax_m)
 
+        # logits = ||x||cos(m * theta)
+        scaled_logits = tf.multiply(phi, features_norm)
+
         asoftmax_lambda = tf.maximum(params.asoftmax_lambda_min,
                                      params.asoftmax_lambda_base * (1.0 + params.asoftmax_lambda_gamma * tf.to_float(params.global_step)) ** (-params.asoftmax_lambda_power))
         fa = 1.0 / (1.0 + asoftmax_lambda)
         fs = 1.0 - fa
-        cos_theta_asoftmax = tf.add(cos_theta,
+        logits_asoftmax = tf.add(logits,
                                     tf.scatter_nd(ordinal_labels,
-                                                  tf.subtract(phi, cos_theta_i),
-                                                  tf.shape(cos_theta, out_type=tf.int32)))
-        updated_cos_theta = fs * cos_theta + fa * cos_theta_asoftmax
-
-        if "asoftmax_norm" in params.dict and params.asoftmax_norm:
-            updated_logits = params.asoftmax_s * updated_cos_theta
-            tf.logging.info("Use feature normalization. The scaling factor is %f" % params.asoftmax_s)
-        else:
-            # ||x|| * Phi(theta, m)
-            updated_logits = norm * updated_cos_theta
+                                                  tf.subtract(scaled_logits, sel_logits),
+                                                  tf.shape(logits, out_type=tf.int64)))
+        updated_logits = fs * logits + fa * logits_asoftmax
 
         tf.summary.scalar("asoftmax_lambda", asoftmax_lambda)
-        tf.summary.scalar("asoftmax_fa", fa)
         tf.summary.scalar("asoftmax_m", params.asoftmax_m)
         loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=updated_logits)
         return loss
@@ -388,7 +373,6 @@ def additive_margin_softmax(features, labels, num_outputs, params, is_training=N
     """
     # Convert the parameters to float
     params.amsoftmax_m = float(params.amsoftmax_m)
-
     weight_l2_regularizer = params.weight_l2_regularizer
     if "output_weight_l2_regularizer" in params.dict:
         weight_l2_regularizer = params.output_weight_l2_regularizer
@@ -397,29 +381,32 @@ def additive_margin_softmax(features, labels, num_outputs, params, is_training=N
                             initializer=tf.contrib.layers.xavier_initializer(),
                             regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
         params.dict["softmax_w"] = w
-        norm = tf.norm(features, axis=1, keep_dims=True)
-        features = tf.nn.l2_normalize(features, dim=1)
-        w_norm = tf.nn.l2_normalize(w, dim=0)
-        cos_theta = tf.matmul(features, w_norm)
-        cos_theta = tf.clip_by_value(cos_theta, -1, 1)  # for numerical steady
-        phi = cos_theta - params.amsoftmax_m
-        labels_onehot = tf.one_hot(labels, num_outputs, 1, 0, dtype=tf.int32)
 
-        if "amsoftmax_norm" in params.dict and params.amsoftmax_norm:
-            assert "amsoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
-            params.amsoftmax_s = float(params.amsoftmax_s)
-            # s * (cos(theta) - m)
-            logits_amsoftmax = params.amsoftmax_s * tf.where(tf.equal(labels_onehot, 1), phi, cos_theta)
-            tf.logging.info("Use feature normalization. The scaling factor is %f" % params.amsoftmax_s)
-        else:
-            logits_amsoftmax = norm * tf.where(tf.equal(labels_onehot, 1), phi, cos_theta)
+        w_norm = tf.nn.l2_normalize(w, dim=0)
+        logits = tf.matmul(features, w_norm)
+
+        ordinal = tf.to_int32(tf.range(shape_list(features)[0]))
+        ordinal_labels = tf.stack([ordinal, labels], axis=1)
+        sel_logits = tf.gather_nd(logits, ordinal_labels)
+
+        # The angle between x and the target w_i.
+        eps = 1e-12
+        features_norm = tf.maximum(tf.norm(features, axis=1), eps)
+        cos_theta_i = tf.div(sel_logits, features_norm)
+        cos_theta_i = tf.clip_by_value(cos_theta_i, -1, 1)  # for numerical steady
+        phi_i = cos_theta_i - params.amsoftmax_m
+
+        # logits = ||x||(cos(theta) - m)
+        scaled_logits = tf.multiply(phi_i, features_norm)
+
+        logits_amsoftmax = tf.add(logits,
+                                  tf.scatter_nd(ordinal_labels,
+                                                tf.subtract(scaled_logits, sel_logits),
+                                                tf.shape(logits, out_type=tf.int64)))
         tf.logging.info("The margin in the additive margin softmax is %f" % params.amsoftmax_m)
         tf.summary.scalar("amsoftmax_m", params.amsoftmax_m)
         loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_amsoftmax)
         return loss
-
-
-# def ring_loss(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
 
 
 def additive_angular_margin_softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
@@ -449,44 +436,41 @@ def additive_angular_margin_softmax(features, labels, num_outputs, params, is_tr
                             initializer=tf.contrib.layers.xavier_initializer(),
                             regularizer=tf.contrib.layers.l2_regularizer(weight_l2_regularizer))
         params.dict["softmax_w"] = w
-        norm = tf.norm(features, axis=1, keep_dims=True)
-        features = tf.nn.l2_normalize(features, dim=1)
-        w_norm = tf.nn.l2_normalize(w, dim=0)
 
-        cos_theta = tf.matmul(features, w_norm)
-        cos_theta = tf.clip_by_value(cos_theta, -1, 1)
+        w_norm = tf.nn.l2_normalize(w, dim=0)
+        logits = tf.matmul(features, w_norm)
 
         ordinal = tf.to_int32(tf.range(shape_list(features)[0]))
         ordinal_labels = tf.stack([ordinal, labels], axis=1)
+        sel_logits = tf.gather_nd(logits, ordinal_labels)
+
         # The angle between x and the target w_i.
-        cos_theta_i = tf.gather_nd(cos_theta, ordinal_labels)
+        eps = 1e-12
+        features_norm = tf.maximum(tf.norm(features, axis=1), eps)
+        cos_theta_i = tf.div(sel_logits, features_norm)
+        cos_theta_i = tf.clip_by_value(cos_theta_i, -1, 1)  # for numerical steady
 
         # Since 0 < theta < pi, sin(theta) > 0. sin(theta) = sqrt(1 - cos(theta)^2)
         # cos(theta + m) = cos(theta)cos(m) - sin(theta)sin(m)
         sin_theta_i_sq = 1 - tf.square(cos_theta_i)
-        mask = tf.to_float(tf.less(sin_theta_i_sq, 1e-16))
-        sin_theta_i = tf.sqrt(sin_theta_i_sq + mask * 1e-16) * (1 - mask)
+        sin_theta_i = tf.sqrt(tf.maximum(sin_theta_i_sq, 1e-16))
         cos_theta_plus_m_i = cos_theta_i * tf.cos(params.arcsoftmax_m) - sin_theta_i * tf.sin(params.arcsoftmax_m)
 
-        # Since theta \in [0, pi], theta > pi + m means cos(theta) < cos(pi+m)
-        # If theta < pi - m, Phi(theta) = cos(theta + m).
-        # If theta > pi + m, Phi(theta) = -cos(theta + m) - 2
-        phi = tf.where(tf.greater(cos_theta_i, tf.cos(np.pi + params.arcsoftmax_m)),
-                       cos_theta_plus_m_i,
-                       -cos_theta_plus_m_i - 2)
+        # Since theta \in [0, pi], theta + m > pi means cos(theta) < cos(pi - m)
+        # If theta + m < pi, Phi(theta) = cos(theta + m).
+        # If theta + m > pi, Phi(theta) = -cos(theta + m) - 2
+        phi_i = tf.where(tf.greater(cos_theta_i, tf.cos(np.pi - params.arcsoftmax_m)),
+                         cos_theta_plus_m_i,
+                         -cos_theta_plus_m_i - 2)
 
-        cos_arcsoftmax = tf.add(cos_theta,
-                                tf.scatter_nd(ordinal_labels,
-                                              phi - cos_theta_i, tf.shape(cos_theta, out_type=tf.int32)))
+        # logits = ||x||(cos(theta + m))
+        scaled_logits = tf.multiply(phi_i, features_norm)
 
-        if "arcsoftmax_norm" in params.dict and params.arcsoftmax_norm:
-            assert "arcsoftmax_s" in params.dict, "If feature normalization is applied, scaling factor is necessary."
-            params.arcsoftmax_s = float(params.arcsoftmax_s)
-            # s * (cos(theta) - m)
-            logits_arcsoftmax = params.arcsoftmax_s * cos_arcsoftmax
-            tf.logging.info("Use feature normalization. The scaling factor is %f" % params.arcsoftmax_s)
-        else:
-            logits_arcsoftmax = norm * cos_arcsoftmax
+        logits_arcsoftmax = tf.add(logits,
+                                   tf.scatter_nd(ordinal_labels,
+                                                 tf.subtract(scaled_logits, sel_logits),
+                                                 tf.shape(logits, out_type=tf.int64)))
+
         tf.logging.info("The margin in the additive angular margin softmax is %f" % params.arcsoftmax_m)
         tf.summary.scalar("arcsoftmax_m", params.arcsoftmax_m)
         loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_arcsoftmax)

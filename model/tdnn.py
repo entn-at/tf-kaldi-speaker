@@ -149,18 +149,23 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
         if "num_nodes_last_layer" not in params.dict:
             # The default number of nodes in the last layer
             params.dict["num_nodes_last_layer"] = 512
+
         features = tf.layers.dense(features,
                                    params.num_nodes_last_layer,
                                    activation=None,
                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
                                    name='tdnn7_dense')
         endpoints['tdnn7_dense'] = features
-        # Fix: Do batchnorm no matter whether we do relu.
-        features = tf.layers.batch_normalization(features,
-                                                 momentum=params.batchnorm_momentum,
-                                                 training=is_training,
-                                                 name="tdnn7_bn")
-        endpoints["tdnn7_bn"] = features
+
+        if "last_layer_no_bn" not in params.dict:
+            params.last_layer_no_bn = False
+
+        if not params.last_layer_no_bn:
+            features = tf.layers.batch_normalization(features,
+                                                     momentum=params.batchnorm_momentum,
+                                                     training=is_training,
+                                                     name="tdnn7_bn")
+            endpoints["tdnn7_bn"] = features
 
         if not params.last_layer_linear:
             # If the last layer is linear, no further activation is needed.
