@@ -9,8 +9,12 @@ Please note that the code is under Apache 2.0. NO WARRANTY about the results.
 
 My website: yiliu.org.cn
 
+
+find ./ -name "*.sh" | awk '{print "chmod +x "$1}' | sh
+
+
 ===========================
 
-Projects I use:
+Other projects:
 
 https://github.com/vesis84/kaldi-io-for-python
