@@ -41,7 +41,7 @@ def prelu(x, name="prelu", shared=True):
 
 
 def l2_scaling(x, scaling_factor, epsilon=1e-12):
-    """Feature normalization before re-scaling.
+    """Feature normalization before re-scaling along the last axis.
 
     Args:
         x: The input features.

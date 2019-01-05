@@ -26,7 +26,7 @@ class Trainer():
 
         # The network configuration is set while the loss is left to the build function.
         # I think we can switch different loss functions during training epochs.
-        # Then simple re-build the network can give us a different loss.
+        # Then simple re-build the network can give us a different loss. The main network won't change at that case.
         self.network_type = params.network_type
         if params.network_type == "tdnn":
             self.network = tdnn
@@ -166,7 +166,8 @@ class Trainer():
 
     def entire_network(self, features, params, is_training, reuse_variables):
         """The definition of the entire network.
-        Sometimes, feature normalization is applied after the main network. We combine them together.
+        Sometimes, feature normalization is applied after the main network.
+        We combine them together (except for the loss layer).
 
         Args:
             features: The network input.
@@ -176,11 +177,12 @@ class Trainer():
         :return: The network output and the endpoints (for other usage).
         """
         features, endpoints = self.network(features, params, is_training, reuse_variables)
+        endpoints["output"] = features
         # Add more components (post-processing) after the main network.
         if "feature_norm" in params.dict and params.feature_norm:
             assert "feature_scaling_factor" in params.dict, "If feature normalization is applied, scaling factor is necessary."
             features = l2_scaling(features, params.feature_scaling_factor)
-            endpoints["feature_scale"] = features
+            endpoints["output"] = features
 
         return features, endpoints
 
@@ -219,11 +221,12 @@ class Trainer():
             return
 
         # global_step should be defined before loss function since some loss functions use this value to tune
-        # the internal parameters.
+        # some internal parameters.
         if self.global_step is None:
             self.global_step = tf.placeholder(tf.int32, name="global_step")
             self.params.dict["global_step"] = self.global_step
 
+        # If new loss function is added, please modify the code.
         self.loss_type = loss_type
         if loss_type == "softmax":
             self.loss_network = softmax
@@ -249,6 +252,7 @@ class Trainer():
             with tf.name_scope("valid") as scope:
                 # We can adjust some parameters in the config when we do validation
                 # TODO: I'm not sure whether it is necssary to change the margin for the valid set.
+                # TODO: compare the performance!
                 # Change the margin for the valid set.
                 if loss_type == "softmax":
                     pass
@@ -281,10 +285,9 @@ class Trainer():
 
                 # We can evaluate other stuff in the valid_ops. Just add the new values to the dict.
                 # We may also need to check other values expect for the loss. Leave the task to other functions.
-                # So I create the embedding output for the validation set thus we can do lots of things with it.
-                self.embeddings = endpoints[self.params.embedding_node]
+                # During validation, I compute the cosine EER for the final output of the network.
+                self.embeddings = endpoints["output"]
 
-                # TODO: add accuracy to the valid path.
                 self.valid_ops["raw_valid_loss"] = valid_loss
                 mean_valid_loss, mean_valid_loss_op = tf.metrics.mean(valid_loss)
                 self.valid_ops["valid_loss"] = mean_valid_loss
@@ -316,6 +319,9 @@ class Trainer():
             # It is also possible to use other optimizers, e.g. Adam.
             tf.logging.info("***** Using Momentum as the optimizer.")
             opt = tf.train.MomentumOptimizer(self.learning_rate, self.params.momentum, use_nesterov=self.params.use_nesterov, name="optimizer")
+        elif self.params.optimizer == "adam":
+            tf.logging.info("***** Using Adam as the optimizer.")
+            opt = tf.train.AdamOptimizer(self.learning_rate, name="optimizer")
         else:
             sys.exit("Optimizer %s is not supported." % self.params.optimizer)
         self.optimizer = opt
@@ -430,7 +436,7 @@ class Trainer():
                                                                     self.learning_rate: learning_rate})
                     end_time = time.time()
                     tf.logging.info(
-                        "Epoch: [%2d] step: [%2d/%2d] time: %.4f s/step, raw loss: %f, total loss: %f" \
+                        "Epoch: [%2d] step: [%2d/%2d] time: %.4f s/step, raw loss: %f, total loss: %f"
                         % (epoch, step, self.params.num_steps_per_epoch, end_time - start_time,
                            train_val[0]["raw_loss"], train_val[0]["loss"]))
                     if step % self.params.save_summary_steps == 0:
@@ -556,7 +562,7 @@ class Trainer():
         finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
 
         # Save the new model. The new model is basically the same with the pre-trained one, while parameters
-        # NOT in the pre-trained model are initialized.
+        # NOT in the pre-trained model are random initialized.
         # Set the step to 1.
         self.save(1)
         return
@@ -576,11 +582,11 @@ class Trainer():
 
         :return: valid_loss, embeddings and labels (None if output_embeddings is False).
         """
-        # Initialization will reset all the variables in the graph
-        # The local variables are also need to be initialized for metrics function
+        # Initialization will reset all the variables in the graph.
+        # The local variables are also need to be initialized for metrics function.
         self.sess.run(tf.global_variables_initializer())
         self.sess.run(tf.local_variables_initializer())
-        assert batch_type == "softmax" or batch_type == "end2end", "The batch_type can be softmax or end2end"
+        assert batch_type == "softmax" or batch_type == "end2end", "The batch_type can only be softmax or end2end"
 
         curr_step = 0
         # Load the model. The valid function can only be called after training (of course...)

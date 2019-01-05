@@ -71,7 +71,7 @@ def compute_ge2e_loss(embeddings, labels, w, b, ge2e_type):
     if ge2e_type == "softmax":
         s = softmax(sim)
         for i in range(n_samples):
-            loss -= np.log(s[i, class_index[i]])
+            loss -= np.log(s[i, class_index[i]] + 1e-16)
             # loss -= sim[i, class_index[i]] - np.log(np.sum(np.exp(sim[i, :])) + 1e-16)
     else:
         for i in range(n_samples):
@@ -163,38 +163,40 @@ def compute_asoftmax(embeddings, labels, params, w):
             w: the weight matrix of W
         :return: The angular loss
     """
+    n = embeddings.shape[0]
     embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     prod = np.dot(embeddings, w)
     prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
-    n = embeddings.shape[0]
+    cosine = prod / embeddings_norm
+    if params.feature_norm:
+        logits = params.feature_scaling_factor * cosine
+    else:
+        logits = embeddings_norm * cosine
 
     if params.asoftmax_m == 1:
-        if params.asoftmax_norm:
-            prod = params.asoftmax_s * (prod / embeddings_norm)
-        prob = softmax(prod)
+        prob = softmax(logits)
         loss = 0
         for i in range(n):
-            loss -= np.log(prob[i, labels[i]])
+            loss -= np.log(prob[i, labels[i]] + 1e-16)
         return loss / n
 
     lamb = max(params.asoftmax_lambda_min, params.asoftmax_lambda_base * (1.0 + params.asoftmax_lambda_gamma * params.global_step) ** (-params.asoftmax_lambda_power))
     fa = 1.0 / (1.0 + lamb)
     fs = 1.0 - fa
 
-    prod /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
-    prod = np.minimum(np.maximum(prod, -1), 1)
+    cosine = np.minimum(np.maximum(cosine, -1), 1)
     if params.asoftmax_m == 2:
         for i in range(n):
-            if prod[i, labels[i]] > 0:
+            if cosine[i, labels[i]] > 0:
                 k = 0
             else:
                 k = 1
-            prod[i, labels[i]] = fa * (((-1) ** k) * (np.cos(2 * np.arccos(prod[i, labels[i]]))) - 2 * k) + fs * prod[i, labels[i]]
-        if params.asoftmax_norm:
-            prod *= params.asoftmax_s
+            cosine[i, labels[i]] = fa * (((-1) ** k) * (np.cos(2 * np.arccos(cosine[i, labels[i]]))) - 2 * k) + fs * cosine[i, labels[i]]
+        if params.feature_norm:
+            logits = params.feature_scaling_factor * cosine
         else:
-            prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
-        prob = softmax(prod)
+            logits = embeddings_norm * cosine
+        prob = softmax(logits)
         loss = 0
         for i in range(n):
             loss -= np.log(prob[i, labels[i]] + 1e-16)
@@ -202,21 +204,21 @@ def compute_asoftmax(embeddings, labels, params, w):
 
     assert params.asoftmax_m == 4
     for i in range(n):
-        l = np.cos(2 * np.arccos(prod[i, labels[i]]))
-        if prod[i, labels[i]] > 0 and l > 0:
+        l = np.cos(2 * np.arccos(cosine[i, labels[i]]))
+        if cosine[i, labels[i]] > 0 and l > 0:
             k = 0
-        elif prod[i, labels[i]] > 0 and l < 0:
+        elif cosine[i, labels[i]] > 0 and l < 0:
             k = 1
-        elif prod[i, labels[i]] < 0 and l < 0:
+        elif cosine[i, labels[i]] < 0 and l < 0:
             k = 2
         else:
             k = 3
-        prod[i, labels[i]] = fa * (((-1) ** k) * (np.cos(4 * np.arccos(prod[i, labels[i]]))) - 2 * k) + fs * prod[i, labels[i]]
-    if params.asoftmax_norm:
-        prod *= params.asoftmax_s
+        cosine[i, labels[i]] = fa * (((-1) ** k) * (np.cos(4 * np.arccos(cosine[i, labels[i]]))) - 2 * k) + fs * cosine[i, labels[i]]
+    if params.feature_norm:
+        logits = params.feature_scaling_factor * cosine
     else:
-        prod *= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
-    prob = softmax(prod)
+        logits = embeddings_norm * cosine
+    prob = softmax(logits)
     loss = 0
     for i in range(n):
         loss -= np.log(prob[i, labels[i]] + 1e-16)
@@ -233,21 +235,34 @@ def compute_amsoftmax(embeddings, labels, params, w):
             w: the weight matrix of W
         :return: The additive margin loss
     """
+    n = embeddings.shape[0]
     embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     prod = np.dot(embeddings, w)
     prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
-    n = embeddings.shape[0]
     cos_theta = prod / embeddings_norm
     cos_theta = np.minimum(np.maximum(cos_theta, -1), 1)
+
+    if params.feature_norm:
+        logits_org = params.feature_scaling_factor * cos_theta
+    else:
+        logits_org = embeddings_norm * cos_theta
+
     for i in range(n):
         cos_theta[i, labels[i]] -= params.amsoftmax_m
 
-    if params.amsoftmax_norm:
-        prod = params.amsoftmax_s * cos_theta
+    if params.feature_norm:
+        logits = params.feature_scaling_factor * cos_theta
     else:
-        prod = embeddings_norm * cos_theta
+        logits = embeddings_norm * cos_theta
 
-    prob = softmax(prod)
+    lamb = max(params.amsoftmax_lambda_min,
+               params.amsoftmax_lambda_base * (1.0 + params.amsoftmax_lambda_gamma * params.global_step) ** (
+                   -params.amsoftmax_lambda_power))
+    fa = 1.0 / (1.0 + lamb)
+    fs = 1.0 - fa
+    logits = fs * logits_org + fa * logits
+
+    prob = softmax(logits)
     loss = 0
     for i in range(n):
         loss -= np.log(prob[i, labels[i]]+1e-16)
@@ -264,12 +279,18 @@ def compute_arcsoftmax(embeddings, labels, params, w):
             w: the weight matrix of W
         :return: The additive angular margin loss
     """
+    n = embeddings.shape[0]
     embeddings_norm = np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-16)
     prod = np.dot(embeddings, w)
     prod /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True) + 1e-16)
-    n = embeddings.shape[0]
     cos_theta = prod / embeddings_norm
     cos_theta = np.minimum(np.maximum(cos_theta, -1), 1)
+
+    if params.feature_norm:
+        logits_org = params.feature_scaling_factor * cos_theta
+    else:
+        logits_org = embeddings_norm * cos_theta
+
     for i in range(n):
         angle = np.arccos(cos_theta[i, labels[i]]) + params.arcsoftmax_m
         if angle > np.pi:
@@ -277,12 +298,19 @@ def compute_arcsoftmax(embeddings, labels, params, w):
         else:
             cos_theta[i, labels[i]] = np.cos(angle)
 
-    if params.arcsoftmax_norm:
-        prod = params.arcsoftmax_s * cos_theta
+    if params.feature_norm:
+        logits = params.feature_scaling_factor * cos_theta
     else:
-        prod = embeddings_norm * cos_theta
+        logits = embeddings_norm * cos_theta
 
-    prob = softmax(prod)
+    lamb = max(params.arcsoftmax_lambda_min,
+               params.arcsoftmax_lambda_base * (1.0 + params.arcsoftmax_lambda_gamma * params.global_step) ** (
+                   -params.arcsoftmax_lambda_power))
+    fa = 1.0 / (1.0 + lamb)
+    fs = 1.0 - fa
+    logits = fs * logits_org + fa * logits
+
+    prob = softmax(logits)
     loss = 0
     for i in range(n):
         loss -= np.log(prob[i, labels[i]] + 1e-16)

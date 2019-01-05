@@ -210,7 +210,7 @@ def get_checkpoint(model, checkpoint=-1):
     return model_checkpoint_path
 
 
-def compute_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
+def compute_cos_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
     """Compute pairwise EER using cosine similarity.
     The EER is estimated by interp1d and brentq, so it is not the exact value and may be a little different each time.
 

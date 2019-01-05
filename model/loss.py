@@ -262,6 +262,13 @@ def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_vari
     SphereFace: Deep Hypersphere Embedding for Face Recognition
     https://arxiv.org/abs/1704.08063
 
+    Hint:
+    For marginal softmax, the target logits will be significantly smaller than other logits in the beginning
+    of the training, making the probability quite small. The cross entropy may encounter some numerical problem
+    (prob --> 0, -xent --> inf). Due to this reason, applying margin after pretraining may be a good choice.
+    After pretraining, the target logit will be larger than other logits, and the margin won't eliminate
+    the probability in that case. So we apply annealing to all marginal softmax (asoftmax, amsoftmax, arcsoftmax, etc.).
+
     Args:
         features: A tensor with shape [batch, dim].
         labels: A tensor with shape [batch].
@@ -345,7 +352,7 @@ def asoftmax(features, labels, num_outputs, params, is_training=None, reuse_vari
         logits_asoftmax = tf.add(logits,
                                     tf.scatter_nd(ordinal_labels,
                                                   tf.subtract(scaled_logits, sel_logits),
-                                                  tf.shape(logits, out_type=tf.int64)))
+                                                  tf.shape(logits, out_type=tf.int32)))
         updated_logits = fs * logits + fa * logits_asoftmax
 
         tf.summary.scalar("asoftmax_lambda", asoftmax_lambda)
@@ -358,6 +365,8 @@ def additive_margin_softmax(features, labels, num_outputs, params, is_training=N
     """Additive margin softmax.
     link: https://arxiv.org/abs/1801.05599
     ref: https://github.com/Joker316701882/Additive-Margin-Softmax
+    Although it is claimed that there is no need to use annealing scheme, I also add lambda to tune the weight of
+    the modified logits.
 
     Args:
         features: A tensor with shape [batch, dim].
@@ -372,7 +381,12 @@ def additive_margin_softmax(features, labels, num_outputs, params, is_training=N
         reuse_variables: Reuse variables.
     """
     # Convert the parameters to float
+    params.amsoftmax_lambda_min = float(params.amsoftmax_lambda_min)
+    params.amsoftmax_lambda_base = float(params.amsoftmax_lambda_base)
+    params.amsoftmax_lambda_gamma = float(params.amsoftmax_lambda_gamma)
+    params.amsoftmax_lambda_power = float(params.amsoftmax_lambda_power)
     params.amsoftmax_m = float(params.amsoftmax_m)
+
     weight_l2_regularizer = params.weight_l2_regularizer
     if "output_weight_l2_regularizer" in params.dict:
         weight_l2_regularizer = params.output_weight_l2_regularizer
@@ -402,16 +416,26 @@ def additive_margin_softmax(features, labels, num_outputs, params, is_training=N
         logits_amsoftmax = tf.add(logits,
                                   tf.scatter_nd(ordinal_labels,
                                                 tf.subtract(scaled_logits, sel_logits),
-                                                tf.shape(logits, out_type=tf.int64)))
+                                                tf.shape(logits, out_type=tf.int32)))
+
+        amsoftmax_lambda = tf.maximum(params.amsoftmax_lambda_min,
+                                      params.amsoftmax_lambda_base * (1.0 + params.amsoftmax_lambda_gamma * tf.to_float(
+                                          params.global_step)) ** (-params.amsoftmax_lambda_power))
+        fa = 1.0 / (1.0 + amsoftmax_lambda)
+        fs = 1.0 - fa
+        updated_logits = fs * logits + fa * logits_amsoftmax
+
         tf.logging.info("The margin in the additive margin softmax is %f" % params.amsoftmax_m)
         tf.summary.scalar("amsoftmax_m", params.amsoftmax_m)
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_amsoftmax)
+        tf.summary.scalar("amsoftmax_lambda", amsoftmax_lambda)
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=updated_logits)
         return loss
 
 
 def additive_angular_margin_softmax(features, labels, num_outputs, params, is_training=None, reuse_variables=None):
     """Additive angular margin softmax (ArcFace)
     link: https://arxiv.org/abs/1801.07698
+    Annealing scheme is also added.
 
     Args:
         features: A tensor with shape [batch, dim].
@@ -426,6 +450,10 @@ def additive_angular_margin_softmax(features, labels, num_outputs, params, is_tr
         reuse_variables: Reuse variables.
     """
     # Convert the parameters to float
+    params.arcsoftmax_lambda_min = float(params.arcsoftmax_lambda_min)
+    params.arcsoftmax_lambda_base = float(params.arcsoftmax_lambda_base)
+    params.arcsoftmax_lambda_gamma = float(params.arcsoftmax_lambda_gamma)
+    params.arcsoftmax_lambda_power = float(params.arcsoftmax_lambda_power)
     params.arcsoftmax_m = float(params.arcsoftmax_m)
 
     weight_l2_regularizer = params.weight_l2_regularizer
@@ -453,7 +481,7 @@ def additive_angular_margin_softmax(features, labels, num_outputs, params, is_tr
         # Since 0 < theta < pi, sin(theta) > 0. sin(theta) = sqrt(1 - cos(theta)^2)
         # cos(theta + m) = cos(theta)cos(m) - sin(theta)sin(m)
         sin_theta_i_sq = 1 - tf.square(cos_theta_i)
-        sin_theta_i = tf.sqrt(tf.maximum(sin_theta_i_sq, 1e-16))
+        sin_theta_i = tf.sqrt(tf.maximum(sin_theta_i_sq, 1e-12))
         cos_theta_plus_m_i = cos_theta_i * tf.cos(params.arcsoftmax_m) - sin_theta_i * tf.sin(params.arcsoftmax_m)
 
         # Since theta \in [0, pi], theta + m > pi means cos(theta) < cos(pi - m)
@@ -469,11 +497,19 @@ def additive_angular_margin_softmax(features, labels, num_outputs, params, is_tr
         logits_arcsoftmax = tf.add(logits,
                                    tf.scatter_nd(ordinal_labels,
                                                  tf.subtract(scaled_logits, sel_logits),
-                                                 tf.shape(logits, out_type=tf.int64)))
+                                                 tf.shape(logits, out_type=tf.int32)))
+
+        arcsoftmax_lambda = tf.maximum(params.arcsoftmax_lambda_min,
+                                       params.arcsoftmax_lambda_base * (1.0 + params.arcsoftmax_lambda_gamma * tf.to_float(
+                                           params.global_step)) ** (-params.arcsoftmax_lambda_power))
+        fa = 1.0 / (1.0 + arcsoftmax_lambda)
+        fs = 1.0 - fa
+        updated_logits = fs * logits + fa * logits_arcsoftmax
 
         tf.logging.info("The margin in the additive angular margin softmax is %f" % params.arcsoftmax_m)
         tf.summary.scalar("arcsoftmax_m", params.arcsoftmax_m)
-        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits_arcsoftmax)
+        tf.summary.scalar("arcsoftmax_lambda", arcsoftmax_lambda)
+        loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=updated_logits)
         return loss
 
 
