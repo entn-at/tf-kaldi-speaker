@@ -15,10 +15,13 @@
 
 
 #b) BUT cluster options
-export train_cmd="queue.pl -l qp=low -l osrel='*' -l osrel='*'"
-export decode_cmd="queue.pl -l qp=low -l osrel='*' -l osrel='*'"
-export mkgraph_cmd="queue.pl -l qp=low -l osrel='*'"
-export cuda_cmd="queue.pl -l qp=cuda-low -l osrel='*' -l gpuclass='*'"
+#export cuda_cmd="queue.pl -l qp=cuda-low -l osrel='*' -l gpuclass='*'"
+#export decode_cmd="queue.pl -l qp=low -l osrel='*' -l osrel='*'"
+#export mkgraph_cmd="queue.pl -l qp=low -l osrel='*'"
+
+#c) THU Tianjin Cluster
+export train_cmd="slurm.pl -p r830all.q"
+export cuda_cmd=run.pl
 # somehow, nnet-forward cpu usage exceeds 100% per job on air124
 
 #c) run it locally...

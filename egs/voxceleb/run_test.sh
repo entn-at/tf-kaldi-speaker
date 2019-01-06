@@ -21,7 +21,7 @@ exp=$root/exp
 mfccdir=$root/mfcc
 vaddir=$root/mfcc
 
-stage=7
+stage=8
 
 # The virtualenv path
 export TF_ENV=/home/heliang05/liuyi/venv
@@ -259,16 +259,17 @@ echo
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_asoftmax_1e-2_m2_long
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m4
 checkpoint=-1
 
 if [ $stage -le 8 ]; then
   # Extract the embeddings
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 60 --use-gpu false --checkpoint $checkpoint --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --env tf_cpu --nj 100 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data/voxceleb_train $nnetdir/xvectors_voxceleb_train
+  exit 1
 
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 40 --use-gpu false --checkpoint $checkpoint --stage 0 \
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --env tf_cpu --nj 40 --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data/voxceleb_test $nnetdir/xvectors_voxceleb_test
 fi

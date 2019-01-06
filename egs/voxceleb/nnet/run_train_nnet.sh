@@ -2,6 +2,7 @@
 
 cmd="run.pl"
 continue_training=false
+env=tf_gpu
 
 echo "$0 $@"
 
@@ -31,6 +32,9 @@ if [ $continue_training == 'true' ]; then
   cmdopts="-c"
 fi
 
+# Activate the gpu virtualenv
+# The tensorflow is installed using pip (virtualenv). Modify the code if you activate TF by other ways.
+source $TF_ENV/$env/bin/activate
 $cmd $nnetdir/log/train_nnet.log \
     python nnet/lib/train.py $cmdopts --config $config $train $train_spklist $valid $valid_spklist $nnetdir
-
+deactivate

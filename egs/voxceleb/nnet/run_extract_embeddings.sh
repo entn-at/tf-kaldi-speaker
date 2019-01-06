@@ -8,7 +8,7 @@ chunk_size=10000
 stage=0
 normalize=false
 checkpoint=-1
-env=tf_env
+env=tf_cpu
 
 echo "$0 $@"
 
@@ -50,17 +50,17 @@ if [ $stage -le 0 ]; then
   echo "$0: extracting xvectors from nnet"
 
   # Set the checkpoint.
-  source $HOME/$env/bin/activate
-  unset PYTHONPATH
-  export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
+  source $TF_ENV/$env/bin/activate
   export PYTHONPATH=`pwd`/../../:$PYTHONPATH
   python nnet/lib/make_checkpoint.py --checkpoint $checkpoint "$nnetdir"
   deactivate
 
   if $use_gpu; then
-    $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --gpuid JOB --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
-        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
+    echo "Using CPU to do inference is a better choice."
+    exit 1
+#    $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
+#      nnet/wrap/extract_wrapper.sh --gpuid JOB --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+#        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   else
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
       nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \

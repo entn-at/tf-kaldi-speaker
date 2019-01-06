@@ -25,23 +25,12 @@ feat=$2
 dir=$3
 
 if [ ! -z $env ]; then
-  # If conda is used, set the environment and unset the predefined variables.
-#  source activate $env
-  source $HOME/$env/bin/activate
-  unset PYTHONPATH
-  export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
+  source $TF_ENV/$env/bin/activate
 fi
 
 if $normalize; then
   cmdopt_norm="--normalize"
 fi
-
-# Hardly set the MKL-related variables to make the code run on one cpu.
-#export MKL_NUM_THREADS=1
-#export MKL_DOMAIN_NUM_THREADS="MKL_BLAS=1"
-#export OMP_NUM_THREADS=1
-# export MKL_DYNAMIC="FALSE"
-# export OMP_DYNAMIC="FALSE"
 
 export PYTHONPATH=`pwd`/../../:$PYTHONPATH
 
