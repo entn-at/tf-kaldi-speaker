@@ -44,6 +44,11 @@ The general pipeline of our framework is:
 In our framework, the speaker embedding can be trained and extracted using different network architectures.
 Again, the backend classifier is integrated using Kaldi.
 
+
+# License
+
+**The code is under Apache 2.0.**
+
 # Acknowledgements
 
 Thanks to:
@@ -52,11 +57,11 @@ Thanks to:
 
     <https://github.com/vesis84/kaldi-io-for-python>
 
-## License
-
-**The code is under Apache 2.0.**
-
 # Last ...
+
+For cluster setup, please refer to [Kaldi](http://kaldi-asr.org/doc/queue.html) for help.
+In my case, I use slurm to run cpu tasks and use run.pl to run GPU tasks locally.
+Modify cmd.sh and path.sh according to your situation. If you are a Kaldi user, you must be familiar with the setting.
 
 The code will be updated later to support attention, joint training with acoustic model, etc.
 Refer to `CHANGELOG.md` for more details.
