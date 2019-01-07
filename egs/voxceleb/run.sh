@@ -21,7 +21,7 @@ exp=$root/exp
 mfccdir=$root/mfcc
 vaddir=$root/mfcc
 
-stage=7
+stage=11
 
 # The virtualenv path
 export TF_ENV=/home/heliang05/liuyi/venv
@@ -259,7 +259,7 @@ echo
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_asoftmax_1e-2_m2_long
+nnetdir=$exp/xvector_nnet_tdnn_asoftmax_fn_s20_m4
 checkpoint=-1
 
 if [ $stage -le 8 ]; then
@@ -283,11 +283,18 @@ if [ $stage -le 9 ]; then
       $nnetdir/scores/scores_voxceleb_test.cos
 
   eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos) 2> /dev/null`
-  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --c-miss 10 --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
   mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
   echo "EER: $eer%"
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
+
+  # Comment the following lines if you do not have matlab.
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos | grep ' target ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.cos.target
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos | grep ' nontarget ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.cos.nontarget
+  comm=`echo "addpath('../../misc/DETware_v2.1');Get_DCF('$nnetdir/scores/scores_voxceleb_test.cos.target', '$nnetdir/scores/scores_voxceleb_test.cos.nontarget', '$nnetdir/scores/scores_voxceleb_test.cos.result');"`
+  echo "$comm"| matlab -nodesktop
+  tail -n 1 $nnetdir/scores/scores_voxceleb_test.cos.result
 fi
 
 
@@ -320,7 +327,7 @@ if [ $stage -le 11 ]; then
     "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" $nnetdir/scores/scores_voxceleb_test.plda || exit 1;
 
   eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda) 2> /dev/null`
-  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --c-miss 10 --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
   mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
   echo "EER: $eer%"
   echo "minDCF(p-target=0.01): $mindcf1"
@@ -334,16 +341,13 @@ if [ $stage -le 11 ]; then
   # minDCF(p-target=0.01): 0.4933
   # minDCF(p-target=0.001): 0.6168
 fi
-exit 1
 
 if [ $stage -le 12 ]; then
-
-
-  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda) 2> /dev/null`
-  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
-  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.plda $voxceleb1_trials 2> /dev/null`
-  echo "EER: $eer%"
-  echo "minDCF(p-target=0.01): $mindcf1"
-  echo "minDCF(p-target=0.001): $mindcf2"
+  # Use DETware provided by NIST. It requires MATLAB to compute the DET and DCF.
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda | grep ' target ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.plda.target
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.plda | grep ' nontarget ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.plda.nontarget
+  comm=`echo "addpath('../../misc/DETware_v2.1');Get_DCF('$nnetdir/scores/scores_voxceleb_test.plda.target', '$nnetdir/scores/scores_voxceleb_test.plda.nontarget', '$nnetdir/scores/scores_voxceleb_test.plda.result');"`
+  echo "$comm"| matlab -nodesktop
+  tail -n 1 $nnetdir/scores/scores_voxceleb_test.plda.result
 fi
 

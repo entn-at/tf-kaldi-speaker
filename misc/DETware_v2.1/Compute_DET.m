@@ -1,4 +1,4 @@
-function [Pmiss, Pfa] = Compute_DET(true_scores, false_scores)
+function [Pmiss, Pfa, eer] = Compute_DET(true_scores, false_scores)
 %function [Pmiss, Pfa] = Compute_DET (true_scores, false_scores)
 %
 %  Compute_DET computes the (observed) miss/false_alarm probabilities
@@ -47,6 +47,10 @@ Pmiss(1) = 0;
 Pfa(1) = 1.0;
 Pmiss(2:total+1) = sumtrue  ./ num_true;
 Pfa(2:total+1)   = sumfalse ./ num_false;
+
+c=abs(Pmiss-Pfa);
+[a,b]=min(c);
+eer=(Pmiss(b)+Pfa(b))/2;
 
 return
 

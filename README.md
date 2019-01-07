@@ -41,6 +41,10 @@ The general pipeline of our framework is:
 2. TF: Embedding extraction
 3. Kaldi: Backend classifier (Cosine/PLDA) --> performance evaluation
 
+* Evaluate the performance:
+    * MATLAB is used to compute the EER, minDCF08, minDCF10, minDCF12.
+    * If you do not have MATLAB, Kaldi also provides scripts to compute the EER and minDCFs. The minDCF08 from Kaldi is 10x larger than DETware due to the computation method.
+
 In our framework, the speaker embedding can be trained and extracted using different network architectures.
 Again, the backend classifier is integrated using Kaldi.
 
@@ -60,7 +64,7 @@ Thanks to:
 # Last ...
 
 For cluster setup, please refer to [Kaldi](http://kaldi-asr.org/doc/queue.html) for help.
-In my case, I use slurm to run cpu tasks and use run.pl to run GPU tasks locally.
+In my case, the program is run locally.
 Modify cmd.sh and path.sh according to your situation. If you are a Kaldi user, you must be familiar with the setting.
 
 The code will be updated later to support attention, joint training with acoustic model, etc.
