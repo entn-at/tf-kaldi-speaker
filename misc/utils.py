@@ -203,6 +203,8 @@ def get_checkpoint(model, checkpoint=-1):
         with open(os.path.join(model, "valid_loss")) as f:
             for line in f.readlines():
                 epoch, loss, eer = line.split(" ")
+                epoch = int(epoch)
+                loss = float(loss)
                 if loss < min_loss:
                     min_loss = loss
                     min_epoch = epoch

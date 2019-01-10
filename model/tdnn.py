@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model.pooling import statistics_pooling, self_attention, aux_attention
+from model.pooling import statistics_pooling, self_attention, linguistic_attention
 from model.common import prelu
 from collections import OrderedDict
 
@@ -131,8 +131,8 @@ def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=
             features = statistics_pooling(features, aux_features, endpoints, params, is_training)
         elif params.pooling_type == "self_attention":
             features = self_attention(features, aux_features, endpoints, params, is_training)
-        elif params.pooling_type == "aux_attention":
-            features = aux_attention(features, aux_features, endpoints, params, is_training)
+        elif params.pooling_type == "linguistic_attention":
+            features = linguistic_attention(features, aux_features, endpoints, params, is_training)
         else:
             raise NotImplementedError("Not implement %s pooling" % params.poolingtype)
         endpoints['pooling'] = features

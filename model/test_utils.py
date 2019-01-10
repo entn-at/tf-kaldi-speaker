@@ -358,3 +358,44 @@ def compute_self_attention(value, key, query, params):
     att = np.concatenate([att_mean, att_stddev], axis=1)
     return att, penalty
 
+
+def compute_attention(value, key, query, params):
+    """Compute the output of a general attention layer.
+
+    Args:
+        value/key/query: The value, key and query of the attention.
+    :return:
+        att: The output of the attention layer.
+        penalty_term: The penalty term of the attention layer.
+    """
+    batch, length, dim = key.shape
+    dim = value.shape[-1]
+    n_heads = query.shape[0]
+
+    query_time_key = np.zeros((batch, n_heads, length))
+    for i in range(batch):
+        for j in range(n_heads):
+            for k in range(length):
+                query_time_key[i, j, k] = np.sum(key[i, k, :] * query[j, :])
+
+    weights = np.zeros((batch, n_heads, length))
+    for i in range(batch):
+        for j in range(n_heads):
+            weights[i, j, :] = softmax(query_time_key[i, j, :])
+
+    p = np.zeros((batch, n_heads, n_heads))
+    for i in range(batch):
+        p[i, :, :] = np.dot(weights[i, :, :], np.transpose(weights[i, :, :])) - np.eye(n_heads)
+    penalty = params.att_penalty_term * np.sum(np.square(p))
+
+    att_mean = np.zeros((batch, n_heads, dim))
+    att_stddev = np.zeros((batch, n_heads, dim))
+
+    for i in range(batch):
+        for j in range(n_heads):
+            att_mean[i, j, :] = np.dot(weights[i, j, :], value[i, j, :, :])
+            att_stddev[i, j, :] = np.sqrt(np.dot(weights[i, j, :], (value[i, j, :, :] - att_mean[i, j, :]) ** 2) + 1e-12)
+    att_mean = np.reshape(att_mean, [batch, n_heads * dim])
+    att_stddev = np.reshape(att_stddev, [batch, n_heads * dim])
+    att = np.concatenate([att_mean, att_stddev], axis=1)
+    return att, penalty
