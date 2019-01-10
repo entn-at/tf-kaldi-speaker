@@ -1,20 +1,20 @@
 import tensorflow as tf
-from model.pooling import statistics_pooling
+from model.pooling import statistics_pooling, self_attention, aux_attention
 from model.common import prelu
 from collections import OrderedDict
 
 
-def tdnn(features, params, is_training=None, reuse_variables=None):
+def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=None):
     """Build a TDNN network.
     The structure is similar to Kaldi, while it uses bn+relu rather than relu+bn.
-    And there is no dilation used, so it has more parameters than Kaldi x-vector
+    And there is no dilation used, so it has more parameters than Kaldi x-vector.
 
     Args:
         features: A tensor with shape [batch, length, dim].
         params: Configuration loaded from a JSON.
         is_training: True if the network is used for training.
         reuse_variables: True if the network has been built and enable variable reuse.
-
+        aux_features: Auxiliary features (e.g. linguistic features or bottleneck features).
     :return:
         features: The output of the last layer.
         endpoints: An OrderedDict containing output of every components. The outputs are in the order that they add to
@@ -23,9 +23,10 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
     # ReLU is a normal choice while other activation function is possible.
     relu = tf.nn.relu
     if "network_relu_type" in params.dict:
-        # PReLU is added.
         if params.network_relu_type == "prelu":
             relu = prelu
+        if params.network_relu_type == "lrelu":
+            relu = tf.nn.leaky_relu
 
     endpoints = OrderedDict()
     with tf.variable_scope("tdnn", reuse=reuse_variables):
@@ -127,7 +128,11 @@ def tdnn(features, params, is_training=None, reuse_variables=None):
         # Statistics pooling
         # [b, l, 1500] --> [b, 1500]
         if params.pooling_type == "statistics_pooling":
-            features = statistics_pooling(features)
+            features = statistics_pooling(features, aux_features, endpoints, params, is_training)
+        elif params.pooling_type == "self_attention":
+            features = self_attention(features, aux_features, endpoints, params, is_training)
+        elif params.pooling_type == "aux_attention":
+            features = aux_attention(features, aux_features, endpoints, params, is_training)
         else:
             raise NotImplementedError("Not implement %s pooling" % params.poolingtype)
         endpoints['pooling'] = features

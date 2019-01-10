@@ -1,10 +1,13 @@
 {
   "seed": 0,
   "network_type": "tdnn",
+  "last_layer_no_bn": false,
   "last_layer_linear": false,
+  "feature_norm": false,
+
   "loss_func": "asoftmax",
   "asoftmax_m": 1,
-  "asoftmax_lambda_min": 5,
+  "asoftmax_lambda_min": 0,
   "asoftmax_lambda_base": 0,
   "asoftmax_lambda_gamma": 1,
   "asoftmax_lambda_power": 1,
@@ -26,8 +29,8 @@
   "reduce_lr_epochs": 2,
   "show_training_progress": 100,
   "keep_checkpoint_max": 100,
-  "save_summary_steps": 500,
-  "save_checkpoints_steps": 15000,
+  "save_summary_steps": 2000,
+  "save_checkpoints_steps": 30000,
   "valid_max_iterations": 1000,
 
   "num_parallel_datasets": 16,

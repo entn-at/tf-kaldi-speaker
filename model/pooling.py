@@ -1,26 +1,185 @@
 import tensorflow as tf
+from model.common import shape_list, dense_layer, split_heads, combine_last_two_dimensions
 
 
-def statistics_pooling(features):
+VAR2STD_EPSILON = 1e-12
+
+
+def statistics_pooling(features, aux_features, endpoints, params, is_training):
     """Statistics pooling
     Note that we need to take care of the zeros in the variance since the sqrt on 0 will lead to NaN.
 
     Args:
-        features: A tensor with shape [batch, length, dim]
+        features: A tensor with shape [batch, length, dim].
+        aux_features: Auxiliary input features with shape [batch, length, dim].
+        endpoints: Outputs of different parts of the network.
+        params:
+        is_training:
     :return:
-        Statistics pooling result [mean, stddev].
+        Statistics pooling result [mean, stddev] with shape [batch, dim].
     """
-    mean = tf.reduce_mean(features, axis=1, keep_dims=True, name="mean")
-    variance = tf.reduce_mean(tf.squared_difference(features, mean), axis=1, keep_dims=True, name="variance")
-    mean = tf.squeeze(mean, 1)
-    variance = tf.squeeze(variance, 1)
+    with tf.variable_scope("stat_pooling"):
+        mean = tf.reduce_mean(features, axis=1, keep_dims=True, name="mean")
+        variance = tf.reduce_mean(tf.squared_difference(features, mean), axis=1, keep_dims=True, name="variance")
+        mean = tf.squeeze(mean, 1)
+        variance = tf.squeeze(variance, 1)
 
-    # Because the gradient of sqrt is infinite when variance == 0.0
-    mask = tf.to_float(tf.less_equal(variance, 0.0))
-    variance = variance + mask * 1e-16
-    stddev = tf.sqrt(variance)
-    stddev = stddev * (1.0 - mask)
+        # TODO: change the flooring of the covariance.
+        # Because the gradient of sqrt is infinite when variance == 0.0
+        mask = tf.to_float(tf.less_equal(variance, 0.0))
+        variance = variance + mask * 1e-16
+        stddev = tf.sqrt(variance)
+        stddev = stddev * (1.0 - mask)
 
-    stat_pooling = tf.concat([mean, stddev], 1, name="concat")
+        stat_pooling = tf.concat([mean, stddev], 1, name="concat")
 
     return stat_pooling
+
+
+def self_attention(features, aux_features, endpoints, params, is_training=None):
+    """Self-attention
+
+    Args:
+        features: A tensor with shape [batch, length, dim].
+        aux_features: Auxiliary input features with shape [batch, length, dim].
+        endpoints: Outputs of different parts of the network. Useful when doing attention.
+        params: Parameters for self-attention.
+            params.self_att_key_input: Use endpoints[params.self_att_key_input] to compute the key.
+            params.self_att_key_num_nodes: The network to compute the key.
+            params.self_att_value_num_nodes: The network to compute the value.
+            params.self_att_num_heads: The number of heads in multi-head attention.
+            params.self_att_penalty_term: The coefficient of the penalty term.
+            The final dimension of the key and the value is decided by self_att_key_num_nodes and self_att_value_num_nodes.
+            If multi-head attention is used, the key and value will be split first.
+        is_training: Used in BN.
+    :return:
+        Attention result. Also in the statistic format [weighted_mean, weighted_stddev]
+    """
+    assert "self_att_key_input" in params.dict
+    assert "self_att_key_num_nodes" in params.dict
+    assert "self_att_value_num_nodes" in params.dict
+    assert "self_att_num_heads" in params.dict
+    value_features = features
+    key_features = endpoints[params.self_att_key_input]
+
+    with tf.variable_scope("attention"):
+        for index, node in enumerate(params.self_att_key_num_nodes):
+            key_features = dense_layer(key_features, node, endpoints, params, is_training, name=("att_key%d" % index))
+
+        if len(params.self_att_value_num_nodes) != 0:
+            tf.logging.info("Note: Add network to process the value input %s" % value_features.name)
+            for index, node in enumerate(params.self_att_value_num_nodes):
+                value_features = dense_layer(value_features, node, endpoints, params, is_training, name=("att_value%d" % index))
+
+        # The last element in self_att_key_num_nodes and self_att_value_num_nodes
+        # is the dimension of the key and the value. In multi-head attention, they are extended n times.
+        n_heads = params.self_att_num_heads
+        assert shape_list(value_features)[2] % n_heads == 0, "The dim of the value must be divided by the num of heads."
+
+        # Split the value. The key can use the entire vector.
+        value_features = split_heads(value_features, n_heads)
+        val_shape = shape_list(value_features)
+        key_shape = shape_list(key_features)
+
+        tf.logging.info(
+            "Attention:\n"
+            "  The dim of the value: %d, the dim of the key: %d\n"
+            "  The layer has %d heads, resulting in the dim of value of each head %d.\n"
+            "  With weighted mean and stddev, the attention layer results in output with dim %d."
+            % (val_shape[1] * val_shape[-1], key_shape[-1], n_heads, val_shape[-1], val_shape[1] * val_shape[-1] * 2))
+
+        # Initialize query thus the weight for each time step is equal at the beginning.
+        query = tf.get_variable("query", [n_heads, key_shape[-1]], dtype=tf.float32,
+                                initializer=tf.initializers.truncated_normal(stddev=0.1))
+
+        query_time_key = tf.einsum('ijl,kl->ijk', key_features, query, name="query_time_key")
+        weights = tf.nn.softmax(tf.transpose(query_time_key, [0, 2, 1]), name="weights")
+
+        att_mean = tf.einsum('bnld,bnl->bnd', value_features, weights, name="att_mean")
+        att_stddev = tf.subtract(tf.einsum('bnld,bnl->bnd', tf.square(value_features), weights),
+                                 tf.square(att_mean), name="att_stddev")
+
+        att_mean = combine_last_two_dimensions(att_mean)
+        att_stddev = combine_last_two_dimensions(att_stddev)
+
+        mask = tf.to_float(tf.less_equal(att_stddev, VAR2STD_EPSILON))
+        att_stddev = (1.0 - mask) * att_stddev + mask * VAR2STD_EPSILON
+        att_stddev = tf.sqrt(att_stddev)
+
+        att = tf.concat([att_mean, att_stddev], 1, name="concat")
+        endpoints["attention_weights"] = weights
+
+        # Penalty term
+        penalty = tf.einsum('ijk,ikl->ijl', weights, tf.transpose(weights, [0, 2, 1])) - tf.eye(n_heads)
+        penalty = tf.reduce_sum(tf.square(penalty))
+        tf.add_to_collection("PENALTY", params.self_att_penalty_term * penalty)
+
+        # debug
+        endpoints["att_query"] = query
+        endpoints["att_key"] = key_features
+        endpoints["att_value"] = value_features
+    return att
+
+
+def aux_attention(features, aux_features, endpoints, params, is_training=None):
+    """Self-attention
+
+    Args:
+        features: A tensor with shape [batch, length, dim].
+        aux_features: Auxiliary input features with shape [batch, length, dim].
+        endpoints: Outputs of different parts of the network.
+        params:
+        is_training: Used in BN.
+    :return:
+    """
+    pass
+
+
+if __name__ == "__main__":
+    num_labels = 10
+    num_data = 100
+    num_length = 100
+    num_dim = 1500
+    features = tf.placeholder(tf.float32, shape=[None, None, num_dim], name="features")
+    aux_features = None
+    from collections import OrderedDict
+    endpoints = OrderedDict()
+
+    from misc.utils import ParamsPlain
+
+    params = ParamsPlain()
+    params.dict["self_att_key_input"] = "key"
+    params.dict["self_att_key_num_nodes"] = [1500, 1500]
+    params.dict["self_att_value_num_nodes"] = []
+    params.dict["self_att_num_heads"] = 10
+    params.dict["self_att_penalty_term"] = 1
+    params.dict["weight_l2_regularizer"] = 1e-2
+    params.dict["batchnorm_momentum"] = 0.99
+
+    endpoints["key"] = features
+    self_att = self_attention(features, aux_features, endpoints, params, is_training=True)
+    penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
+    grads = tf.gradients(self_att, features)
+    grads_penalty = tf.gradients(penalty_loss, features)
+
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        import numpy as np
+        features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
+        features_val[0, :, :] = 1e-8 * features_val[0, :, :]
+        features_val[1, :, :] = 0
+        features_val[2, :, :] = 100 * features_val[2, :, :]
+        features_val[3, :, :] = 100
+        self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
+        key = endpoints_val["att_key"]
+        value = endpoints_val["att_value"]
+        query = endpoints_val["att_query"]
+
+        from model.test_utils import compute_self_attention
+        self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
+
+        assert np.allclose(np.sum(self_att_val), np.sum(self_att_np))
+        assert np.allclose(penalty_loss_val, penalty_loss_np)
+
+        assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+        assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"

@@ -1,25 +1,23 @@
 import tensorflow as tf
 import os
-import re
 import sys
 import time
 import numpy as np
+from model.trainer import Trainer
+from dataset.data_loader import KaldiMultiDataRandomQueue, KaldiMultiDataSeqQueue, DataOutOfRange
 from model.common import l2_scaling
-from model.tdnn import tdnn
-from model.test_network import test_network
 from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
-from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 from misc.utils import substring_in_list
 
 
-class Trainer():
-    """Handle the training, validation and prediction
+# TODO: have not checked!
+class TrainerMultiInput(Trainer):
+    """Trainer for multiple inputs.
 
-    Trainer is a simple class that deals with examples having feature-label structure.
-    TODO: Add different Trainers to deal with feature+aux_feature - label+aux_label structure.
+    The class supports multiple features as the inputs and multiple labels as the outputs.
+    Useful when we involving bottleneck features, linguistic features or other auxiliary features.
     """
-
     def __init__(self, params, model_dir, single_cpu=False):
         """
         Args:
@@ -27,157 +25,34 @@ class Trainer():
             model_dir: The model directory.
             single_cpu: Run Tensorflow on one cpu. (default = False)
         """
+        super(TrainerMultiInput, self).__init__(params, model_dir, single_cpu)
 
-        # The network configuration is set while the loss is left to the build function.
-        # I think we can switch different loss functions during training epochs.
-        # Then simple re-build the network can give us a different loss. The main network won't change at that case.
-        self.network_type = params.network_type
-        if params.network_type == "tdnn":
-            self.network = tdnn
-        elif params.network_type == "test_network":
-            self.network = test_network
-        else:
-            raise NotImplementedError("Not implement %s network" % params.network_type)
-        self.loss_type = None
-        self.loss_network = None
-
-        # We have to save all the parameters since the different models may need different parameters
-        self.params = params
-
-        if single_cpu:
-            self.sess_config = tf.ConfigProto(intra_op_parallelism_threads=1,
-                                              inter_op_parallelism_threads=1,
-                                              device_count={'CPU': 1},
-                                              allow_soft_placement=True)
-        else:
-            self.sess_config = tf.ConfigProto(allow_soft_placement=True)
-        self.sess = tf.Session(config=self.sess_config)
-
-        # The model is saved in model/nnet and the evaluation result is saved in model/nnet/eval
-        self.model = os.path.join(model_dir, "nnet")
-
-        # The global step. Note that we don't use tf.train.create_global_step because we may extend the code to
-        # support adversarial training, in which the global step increases by 1 after `several` updates on the critic
-        # and encoder. The internal global_step should be carefully handled in that case. So just a placeholder here,
-        # and use a counter to feed in this value is also an option.
-        self.global_step = None
-
-        # The learning rate is just a placeholder. I use placeholder because it gives me flexibility to dynamically
-        # change the learning rate during training.
-        self.learning_rate = None
-
-        # Summary for the training and validation
-        self.train_summary = None
-        self.valid_summary = None
-
-        # The output predictions. Useful in the prediction mode.
-        self.embeddings = None
-
-        # The optimizer used in the training.
-        # The total loss is useful if we want to change the gradient or variables to optimize (e.g. in fine-tuning)
-        self.optimizer = None
-        self.total_loss = None
-
-        # Training operation. This is called at each step
-        self.train_op = None
-
-        # Dicts for training and validation inspection.
-        # In the basic condition, the train_ops contains optimization and training loss.
-        # And valid loss in the valid_ops. It is possible to add other variables to the dictionaries.
-        # Note that the valid loss should be computed from tf.metric.mean, so the valid_ops also has the update ops.
-        # In some steps, the train_ops is required to combine with train_summary to get the summary string.
-        # These ops are only executed once after several steps (for inspection).
-        self.train_ops = {}
-        self.valid_ops = {}
-
-        # Model saver and summary writers
-        # We don't create the saver or writer here, because after reset, they will be unavailable.
-        self.saver = None
-        self.summary_writer = None
-        self.valid_summary_writer = None
-
-        # This is an indicator to tell whether the model is built. After building the model, we can only use `reuse`
-        # to refer to different part of the model.
-        self.is_built = False
-        self.is_loaded = False
-
-        # In train, valid and prediction modes, we need the inputs. If tf.data is used, the input can be a node in
-        # the graph. However, we may also use feed_dict mechanism to feed data, in which case the placeholder is palced
-        # in the graph.
-        # Now we define the placeholder in the build rountine.
-        self.train_features = None
-        self.train_labels = None
-        self.valid_features = None
-        self.valid_labels = None
-        self.pred_features = None
-
-    def reset(self):
-        """Reset the graph so we can create new input pipeline or graph. (Or for other purposes)"""
-        try:
-            self.sess.close()
-        except tf.errors.OpError:
-            # Maybe the session is closed before
-            pass
-        tf.reset_default_graph()
-        # The session should be created again after the graph is reset.
-        self.sess = tf.Session(config=self.sess_config)
-        # After the graph is reset, the flag should be set
-        self.is_built = False
-        self.is_loaded = False
-        # After reset the graph, it is important to reset the seed.
-        tf.set_random_seed(self.params.seed)
-
-        # Reset some variables. The previous ones have become invalid due to the graph reset.
-        self.saver = None
-        self.summary_writer = None
-        self.valid_summary_writer = None
-
-    def close(self):
-        """Close the session we opened."""
-        try:
-            self.sess.close()
-        except tf.errors.OpError:
-            pass
-
-    def load(self):
-        """Load the saved variables.
-
-        If the variables have values, the current values will be changed to the saved ones
-        :return The step of the saved model.
-        """
-        tf.logging.info("Reading checkpoints...")
-        ckpt = tf.train.get_checkpoint_state(self.model)
-        if ckpt and ckpt.model_checkpoint_path:
-            ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
-            step = int(next(re.finditer("(\d+)(?!.*\d)", ckpt_name)).group(0))
-            self.saver.restore(self.sess, os.path.join(self.model, ckpt_name))
-            tf.logging.info("Succeed to load checkpoint {}".format(ckpt_name))
-        else:
-            sys.exit("Failed to find a checkpoint in {}".format(self.model))
-        self.is_loaded = True
-        return step
-
-    def save(self, step):
-        """Save the model.
-
-        Args:
-            step: The global step.
-        """
-        self.saver.save(self.sess, os.path.join(self.model, "model"), global_step=step)
+        # In this class, we need auxiliary features to do the feed-forward operation.
+        # The auxiliary features are dictionary that contains multiple possible features.
+        # When building the network, the auxiliary features are access by their names.
+        # To support more features (inputs), please extend the list below.
+        self.train_aux_features = {"linguistic": None,
+                                   "bottleneck": None,
+                                   "alignment": None}
+        self.valid_aux_features = {"linguistic": None,
+                                   "bottleneck": None,
+                                   "alignment": None}
+        self.pred_aux_features = {"linguistic": None,
+                                  "bottleneck": None,
+                                  "alignment": None}
 
     def entire_network(self, features, params, is_training, reuse_variables):
         """The definition of the entire network.
-        Sometimes, feature normalization is applied after the main network.
-        We combine them together (except for the loss layer).
 
         Args:
-            features: The network input.
+            features: dict, features["features"] and features["aux_features"]
             params: The parameters.
             is_training: True if the network is for training.
             reuse_variables: Share variables.
         :return: The network output and the endpoints (for other usage).
         """
-        features, endpoints = self.network(features, params, is_training, reuse_variables)
+        features, endpoints = self.network(features["features"], params, is_training, reuse_variables,
+                                           aux_features=features["aux_features"])
         endpoints["output"] = features
         # Add more components (post-processing) after the main network.
         if "feature_norm" in params.dict and params.feature_norm:
@@ -190,9 +65,6 @@ class Trainer():
     def build(self, mode, dim, loss_type=None, num_speakers=None):
         """ Build a network.
 
-        Currently, I use placeholder in the graph and feed data during sess.run. So no need to parse
-        features and labels.
-
         Args:
             mode: `train`, `valid` or `predict`.
             dim: The dimension of the feature.
@@ -203,19 +75,25 @@ class Trainer():
         is_training = (mode == "train")
         reuse_variables = True if self.is_built else None
 
+        import pdb
+        pdb.set_trace()
         # Create a new path for prediction, since the training may build a tower the support multi-GPUs
         if mode == "predict":
             self.pred_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="pred_features")
+
+            # We also need to initialize other features.
+            # We need to specify the dim of the auxiliary features.
+            assert "aux_feature_dim" in self.params.dict, "The dim of auxiliary features must be specified as a dict."
+            for name in self.params.aux_feature_dim:
+                self.pred_aux_features[name] = tf.placeholder(tf.float32,
+                                                              shape=[None, None, self.params.aux_feature_dim[name]],
+                                                              name="pred_" + name)
+            pred_features = {"features": self.pred_features,
+                             "aux_features": self.pred_aux_features}
+
             with tf.name_scope("predict") as scope:
                 tf.logging.info("Extract embedding from node %s" % self.params.embedding_node)
-                # There is no need to do L2 normalization in this function, because we can do the normalization outside,
-                # or simply a cosine similarity can do it.
-                # Note that the output node may be different if we use different loss function. For example, if the
-                # softmax is used, the output of 2-last layer is used as the embedding. While if the end2end loss is
-                # used, the output of the last layer may be a better choice. So it is impossible to specify the
-                # embedding node inside the network structure. The configuration will tell the network to output the
-                # correct activations as the embeddings.
-                _, endpoints = self.entire_network(self.pred_features, self.params, is_training, reuse_variables)
+                _, endpoints = self.entire_network(pred_features, self.params, is_training, reuse_variables)
                 self.embeddings = endpoints[self.params.embedding_node]
                 if self.saver is None:
                     self.saver = tf.train.Saver()
@@ -248,8 +126,18 @@ class Trainer():
 
         if mode == "valid":
             tf.logging.info("Building valid network...")
+
+            assert "aux_feature_dim" in self.params.dict, "The dim of auxiliary features must be specified as a dict."
+            for name in self.params.aux_feature_dim:
+                self.valid_aux_features[name] = tf.placeholder(tf.float32,
+                                                               shape=[None, None, self.params.aux_feature_dim[name]],
+                                                               name="valid_" + name)
             self.valid_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="valid_features")
-            self.valid_labels = tf.placeholder(tf.int32, shape=[None,], name="valid_labels")
+            valid_features = {"features": self.valid_features,
+                              "aux_features": self.valid_aux_features}
+
+            self.valid_labels = tf.placeholder(tf.int32, shape=[None, ], name="valid_labels")
+
             with tf.name_scope("valid") as scope:
                 # We can adjust some parameters in the config when we do validation
                 # TODO: I'm not sure whether it is necssary to change the margin for the valid set.
@@ -269,7 +157,7 @@ class Trainer():
                 else:
                     pass
 
-                features, endpoints = self.entire_network(self.valid_features, self.params, is_training, reuse_variables)
+                features, endpoints = self.entire_network(valid_features, self.params, is_training, reuse_variables)
                 valid_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
 
                 # Change the margin back!!!
@@ -303,6 +191,15 @@ class Trainer():
 
         tf.logging.info("Building training network...")
         self.train_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="train_features")
+
+        assert "aux_feature_dim" in self.params.dict, "The dim of auxiliary features must be specified as a dict."
+        for name in self.params.aux_feature_dim:
+            self.train_aux_features[name] = tf.placeholder(tf.float32,
+                                                           shape=[None, None, self.params.aux_feature_dim[name]],
+                                                           name="train_" + name)
+        train_features = {"features": self.train_features,
+                          "aux_features": self.train_aux_features}
+
         self.train_labels = tf.placeholder(tf.int32, shape=[None, ], name="train_labels")
         self.learning_rate = tf.placeholder(tf.float32, name="learning_rate")
 
@@ -330,7 +227,7 @@ class Trainer():
         # Use name_space here. Create multiple name_spaces if multi-gpus
         # There is a copy in `set_trainable_variables`
         with tf.name_scope("train") as scope:
-            features, endpoints = self.entire_network(self.train_features, self.params, is_training, reuse_variables)
+            features, endpoints = self.entire_network(train_features, self.params, is_training, reuse_variables)
             loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
             regularization_loss = tf.losses.get_regularization_loss()
 
@@ -421,14 +318,15 @@ class Trainer():
             curr_step = self.load()
 
         # The data loader
-        data_loader = KaldiDataRandomQueue(data, spklist,
-                                           num_parallel=self.params.num_parallel_datasets,
-                                           max_qsize=self.params.max_queue_size,
-                                           num_speakers=self.params.num_speakers_per_batch,
-                                           num_segments=self.params.num_segments_per_speaker,
-                                           min_len=self.params.min_segment_len,
-                                           max_len=self.params.max_segment_len,
-                                           shuffle=True)
+        data_loader = KaldiMultiDataRandomQueue(data, spklist,
+                                                aux_data=self.params.aux_data_dir,
+                                                num_parallel=self.params.num_parallel_datasets,
+                                                max_qsize=self.params.max_queue_size,
+                                                num_speakers=self.params.num_speakers_per_batch,
+                                                num_segments=self.params.num_segments_per_speaker,
+                                                min_len=self.params.min_segment_len,
+                                                max_len=self.params.max_segment_len,
+                                                shuffle=True)
         data_loader.start()
 
         epoch = int(curr_step / self.params.num_steps_per_epoch)
@@ -440,7 +338,10 @@ class Trainer():
                         train_ops.append(self.train_summary)
                     start_time = time.time()
                     features, labels = data_loader.fetch()
-                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features,
+                    # TODO: Can I feed dict in the feed_dict?
+                    # Or I should feed separate element?
+                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features["features"],
+                                                                    self.train_aux_features: features["aux_features"],
                                                                     self.train_labels: labels,
                                                                     self.global_step: curr_step,
                                                                     self.learning_rate: learning_rate})
@@ -454,7 +355,8 @@ class Trainer():
                 else:
                     # Only compute optimizer.
                     features, labels = data_loader.fetch()
-                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features,
+                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features["features"],
+                                                                self.train_aux_features: features["aux_features"],
                                                                 self.train_labels: labels,
                                                                 self.global_step: curr_step,
                                                                 self.learning_rate: learning_rate})
@@ -485,14 +387,15 @@ class Trainer():
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
 
-        data_loader = KaldiDataRandomQueue(data, spklist,
-                                           num_parallel=self.params.num_parallel_datasets,
-                                           max_qsize=self.params.max_queue_size,
-                                           num_speakers=self.params.num_speakers_per_batch,
-                                           num_segments=self.params.num_segments_per_speaker,
-                                           min_len=self.params.min_segment_len,
-                                           max_len=self.params.max_segment_len,
-                                           shuffle=True)
+        data_loader = KaldiMultiDataRandomQueue(data, spklist,
+                                                aux_data=self.params.aux_data_dir,
+                                                num_parallel=self.params.num_parallel_datasets,
+                                                max_qsize=self.params.max_queue_size,
+                                                num_speakers=self.params.num_speakers_per_batch,
+                                                num_segments=self.params.num_segments_per_speaker,
+                                                min_len=self.params.min_segment_len,
+                                                max_len=self.params.max_segment_len,
+                                                shuffle=True)
         data_loader.start()
 
         # The learning rate normally varies from 1e-4 to 1
@@ -517,7 +420,8 @@ class Trainer():
                     train_ops = [self.train_ops, self.train_op]
                     start_time = time.time()
                     features, labels = data_loader.fetch()
-                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features,
+                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features["features"],
+                                                                    self.train_aux_features: features["aux_features"],
                                                                     self.train_labels: labels,
                                                                     self.global_step: 0,
                                                                     self.learning_rate: lr})
@@ -529,7 +433,8 @@ class Trainer():
                     fp_lr.write("%d %f %f\n" % (step, lr, train_val[0]["loss"]))
                 else:
                     features, labels = data_loader.fetch()
-                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features,
+                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features["features"],
+                                                                self.train_aux_features: features["aux_features"],
                                                                 self.train_labels: labels,
                                                                 self.global_step: 0,
                                                                 self.learning_rate: lr})
@@ -612,13 +517,14 @@ class Trainer():
 
         if output_embeddings:
             # If we want to output embeddings, the features should be loaded in order
-            data_loader = KaldiDataSeqQueue(data, spklist,
-                                            num_parallel=1,
-                                            max_qsize=10,
-                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
-                                            min_len=self.params.min_segment_len,
-                                            max_len=self.params.max_segment_len,
-                                            shuffle=False)
+            data_loader = KaldiMultiDataSeqQueue(data, spklist,
+                                                 aux_data=self.params.aux_data_dir,
+                                                 num_parallel=1,
+                                                 max_qsize=10,
+                                                 batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
+                                                 min_len=self.params.min_segment_len,
+                                                 max_len=self.params.max_segment_len,
+                                                 shuffle=False)
             data_loader.start()
 
             # In this mode, the embeddings and labels will be saved and output. It needs more memory and takes longer
@@ -629,9 +535,10 @@ class Trainer():
                     if num_batches % 100 == 0:
                         tf.logging.info("valid step: %d" % num_batches)
                     features, labels = data_loader.fetch()
-                    valid_val = self.sess.run(valid_ops_emb, feed_dict={self.valid_features: features,
-                                                                    self.valid_labels: labels,
-                                                                    self.global_step: curr_step})
+                    valid_val = self.sess.run(valid_ops_emb, feed_dict={self.valid_features: features["features"],
+                                                                        self.valid_aux_features: features["aux_features"],
+                                                                        self.valid_labels: labels,
+                                                                        self.global_step: curr_step})
                     # Save the embeddings and labels
                     if embeddings_val is None:
                         embeddings_val = valid_val[-2]
@@ -646,22 +553,24 @@ class Trainer():
             data_loader.stop()
 
         if batch_type == "softmax":
-            data_loader = KaldiDataSeqQueue(data, spklist,
-                                            num_parallel=2,
-                                            max_qsize=10,
-                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
-                                            min_len=self.params.min_segment_len,
-                                            max_len=self.params.max_segment_len,
-                                            shuffle=True)
+            data_loader = KaldiMultiDataSeqQueue(data, spklist,
+                                                 aux_data=self.params.aux_data_dir,
+                                                 num_parallel=2,
+                                                 max_qsize=10,
+                                                 batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
+                                                 min_len=self.params.min_segment_len,
+                                                 max_len=self.params.max_segment_len,
+                                                 shuffle=True)
         elif batch_type == "end2end":
-            data_loader = KaldiDataRandomQueue(data, spklist,
-                                               num_parallel=2,
-                                               max_qsize=10,
-                                               num_speakers=self.params.num_speakers_per_batch,
-                                               num_segments=self.params.num_segments_per_speaker,
-                                               min_len=self.params.min_segment_len,
-                                               max_len=self.params.max_segment_len,
-                                               shuffle=True)
+            data_loader = KaldiMultiDataRandomQueue(data, spklist,
+                                                    aux_data=self.params.aux_data_dir,
+                                                    num_parallel=2,
+                                                    max_qsize=10,
+                                                    num_speakers=self.params.num_speakers_per_batch,
+                                                    num_segments=self.params.num_segments_per_speaker,
+                                                    min_len=self.params.min_segment_len,
+                                                    max_len=self.params.max_segment_len,
+                                                    shuffle=True)
         else:
             raise ValueError
 
@@ -671,7 +580,8 @@ class Trainer():
                 if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
                 features, labels = data_loader.fetch()
-                valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
+                valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features["features"],
+                                                                self.valid_aux_features: features["aux_features"],
                                                                 self.valid_labels: labels,
                                                                 self.global_step: curr_step})
                 loss = valid_val[0]["valid_loss"]
@@ -698,12 +608,17 @@ class Trainer():
                 self.load()
             else:
                 sys.exit("Cannot find model in %s" % self.model)
+        features = features["features"]
+        aux_features = features["aux_features"]
         rank = len(features.shape)
         assert(rank == 2 or rank == 3)
+        assert(features.shape == aux_features.shape)
         # Expand the feature if the rank is 2
         if rank == 2:
             features = np.expand_dims(features, axis=0)
-        embeddings = self.sess.run(self.embeddings, feed_dict={self.pred_features: features})
+            aux_features = np.expand_dims(aux_features, axis=0)
+        embeddings = self.sess.run(self.embeddings, feed_dict={self.pred_features: features,
+                                                               self.pred_aux_features: aux_features})
         if rank == 2:
             embeddings = np.squeeze(embeddings, axis=0)
         return embeddings

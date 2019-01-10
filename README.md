@@ -48,10 +48,19 @@ The general pipeline of our framework is:
 In our framework, the speaker embedding can be trained and extracted using different network architectures.
 Again, the backend classifier is integrated using Kaldi.
 
+# Features
+
+* Entire pipeline of neural network speaker verification.
+* Examples including VoxCeleb.
+* Standard x-vector architecture (with minor modification).
+* Angular softmax, additive margin softmax, additive angular margin softmax.
+* TODO: Self attention and other attention methods.
+* TODO: Add egs for SRE and Fiser.
+
 
 # License
 
-**The code is under Apache 2.0.**
+**The code is under Apache 2.0. (refer to "LICENSE")**
 
 # Acknowledgements
 
@@ -63,19 +72,24 @@ Thanks to:
 
 # Last ...
 
-For cluster setup, please refer to [Kaldi](http://kaldi-asr.org/doc/queue.html) for help.
-In my case, the program is run locally.
-Modify cmd.sh and path.sh according to your situation. If you are a Kaldi user, you must be familiar with the setting.
-
-The code will be updated later to support attention, joint training with acoustic model, etc.
-Refer to `CHANGELOG.md` for more details.
-
-UNFORTUNATELY, the code is developed under Windows. The property of files cannot be maintained properly.
+* UNFORTUNATELY, the code is developed under Windows. The property of files cannot be maintained properly.
 After downloading the code, simply run:
-```
-find ./ -name "*.sh" | awk '{print "chmod +x "$1}' | sh
-```
-to add the 'x' property to the .sh files.
+    ```
+    find ./ -name "*.sh" | awk '{print "chmod +x "$1}' | sh
+    ```
+    to add the 'x' property to the .sh files.
 
-If you encounter any problems, please make an issue.
-My website: <http://yiliu.org.cn>
+* For cluster setup, please refer to [Kaldi](http://kaldi-asr.org/doc/queue.html) for help.
+    In my case, the program is run locally.
+    Modify cmd.sh and path.sh just according to standard Kaldi setup.
+
+* **The code will be updated later to support attention, joint training with acoustic model, etc.
+    Refer to `CHANGELOG.md` for more details.**
+
+* If you encounter any problems or have any suggestions, please make an issue.
+
+* If you have any extensions, feel free to create a PR.
+
+* My website: <http://yiliu.org.cn>
+
+    E-mail: liu-yi15 (at) mails (dot) tsinghua (dot) edu (dot) cn

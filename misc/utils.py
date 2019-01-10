@@ -180,7 +180,7 @@ def get_checkpoint(model, checkpoint=-1):
 
     Args:
         model: The model directory.
-        checkpoint: The checkpoint id. If None, set to the latest one.
+        checkpoint: The checkpoint id. If None, set to the BEST one.
     :return: The name of the checkpoint.
     """
     if not os.path.isfile(os.path.join(model, "checkpoint")):
@@ -196,7 +196,21 @@ def get_checkpoint(model, checkpoint=-1):
     steps = [int(c.rsplit('-', 1)[1]) for c in all_model_checkpoint_paths]
     steps = sorted(steps)
     if checkpoint == -1:
-        checkpoint = steps[-1]
+        # checkpoint = steps[-1]
+        tf.logging.info("Load the best model according to valid_loss")
+        min_epoch = -1
+        min_loss = 1e10
+        with open(os.path.join(model, "valid_loss")) as f:
+            for line in f.readlines():
+                epoch, loss, eer = line.split(" ")
+                if loss < min_loss:
+                    min_loss = loss
+                    min_epoch = epoch
+            # Add 1 to min_epoch since epoch is 0-based
+            config_json = os.path.join(model, "config.json")
+            params = Params(config_json)
+            checkpoint = (min_epoch + 1) * params.num_steps_per_epoch
+
     assert checkpoint in steps, "The checkpoint %d not in the model directory" % checkpoint
 
     model_checkpoint_path = model_checkpoint_path.rsplit("-", 1)[0] + "-" + str(checkpoint)

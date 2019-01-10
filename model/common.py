@@ -22,7 +22,7 @@ def shape_list(x):
     return ret
 
 
-def prelu(x, name="prelu", shared=True):
+def prelu(x, name="prelu", shared=False):
     """Parametric ReLU
 
     Args:
@@ -40,7 +40,7 @@ def prelu(x, name="prelu", shared=True):
     return pos + neg
 
 
-def l2_scaling(x, scaling_factor, epsilon=1e-12):
+def l2_scaling(x, scaling_factor, epsilon=1e-12, name="l2_norm"):
     """Feature normalization before re-scaling along the last axis.
 
     Args:
@@ -48,9 +48,10 @@ def l2_scaling(x, scaling_factor, epsilon=1e-12):
         scaling_factor: The scaling factor.
     :return: Normalized and re-scaled features.
     """
-    square_sum = tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True)
-    x_inv_norm = tf.rsqrt(tf.maximum(square_sum, epsilon)) * scaling_factor
-    x_scale = x * x_inv_norm
+    with tf.name_scope(name):
+        square_sum = tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True)
+        x_inv_norm = tf.rsqrt(tf.maximum(square_sum, epsilon)) * scaling_factor
+        x_scale = x * x_inv_norm
     return x_scale
 
 
@@ -96,3 +97,79 @@ def pairwise_euc_distances(embeddings, squared=False):
         distances = distances * (1.0 - mask)
 
     return distances
+
+
+def dense_layer(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+    """Dense connected layer
+
+    Args:
+        features: The input features.
+        num_nodes: The number of the nodes in this layer.
+        endpoints: The endpoitns.
+        params: Parameters.
+        is_training:
+        name:
+    :return: The output of the layer. The endpoints also contains the intermediate outputs of this layer.
+    """
+    relu = tf.nn.relu
+    if "network_relu_type" in params.dict:
+        if params.network_relu_type == "prelu":
+            relu = prelu
+        if params.network_relu_type == "lrelu":
+            relu = tf.nn.leaky_relu
+    features = tf.layers.dense(features,
+                               num_nodes,
+                               activation=None,
+                               kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                               name="%s_dense" % name)
+    endpoints["%s_dense" % name] = features
+    features = tf.layers.batch_normalization(features,
+                                             momentum=params.batchnorm_momentum,
+                                             training=is_training,
+                                             name="%s_bn" % name)
+    endpoints["%s_bn" % name] = features
+    features = relu(features, name='%s_relu' % name)
+    endpoints["%s_relu" % name] = features
+    return features
+
+
+def split_last_dimension(x, n):
+    """Reshape x so that the last dimension becomes two dimensions.
+    The first of these two dimensions is n.
+
+    Args:
+        x: a Tensor with shape [..., m]
+        n: an integer.
+
+    Returns:
+        a Tensor with shape [..., n, m/n]
+    """
+    x_shape = shape_list(x)
+    m = x_shape[-1]
+    if isinstance(m, int) and isinstance(n, int):
+        assert m % n == 0
+    return tf.reshape(x, x_shape[:-1] + [n, m // n])
+
+
+def split_heads(x, num_heads):
+    """Split channels (dimension 2) into multiple heads (becomes dimension 1).
+
+    Args:
+        x: a Tensor with shape [batch, length, channels]
+        num_heads: an integer
+    Returns:
+        a Tensor with shape [batch, num_heads, length, channels / num_heads]
+    """
+    return tf.transpose(split_last_dimension(x, num_heads), [0, 2, 1, 3])
+
+
+def combine_last_two_dimensions(x):
+    """Reshape x so that the last two dimension become one.
+
+    Args:
+        x: a Tensor with shape [..., a, b]
+    Returns:
+        a Tensor with shape [..., ab]
+    """
+    x_shape = shape_list(x)
+    return tf.reshape(x, x_shape[:-2] + [x_shape[-2] * x_shape[-1]])

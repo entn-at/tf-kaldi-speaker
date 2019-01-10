@@ -122,3 +122,7 @@ dmypy.json
 # Matlab
 *.m~
 ._*
+
+egs/voxceleb/nnet_conf/bak*
+egs/mgb*
+egs/leap*
