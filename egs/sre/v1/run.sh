@@ -239,11 +239,13 @@ if [ $stage -le 5 ]; then
   cat $data/swbd_sre_combined_nosil/valid/spk2utt.uniq | utils/apply_map.pl -f 2- $data/swbd_sre_combined_nosil/uniq2utt > $data/swbd_sre_combined_nosil/valid/spk2utt
   utils/spk2utt_to_utt2spk.pl $data/swbd_sre_combined_nosil/valid/spk2utt > $data/swbd_sre_combined_nosil/valid/utt2spk
   cp $data/swbd_sre_combined_nosil/feats.scp $data/swbd_sre_combined_nosil/valid
+  utils/filter_scp.pl $data/swbd_sre_combined_nosil/valid/utt2spk $data/swbd_sre_combined_nosil/utt2num_frames > $data/swbd_sre_combined_nosil/valid/utt2num_frames
   utils/fix_data_dir.sh $data/swbd_sre_combined_nosil/valid
 
   utils/filter_scp.pl --exclude $data/swbd_sre_combined_nosil/valid/utt2spk $data/swbd_sre_combined_nosil/utt2spk > $data/swbd_sre_combined_nosil/train/utt2spk
   utils/utt2spk_to_spk2utt.pl $data/swbd_sre_combined_nosil/train/utt2spk > $data/swbd_sre_combined_nosil/train/spk2utt
   cp $data/swbd_sre_combined_nosil/feats.scp $data/swbd_sre_combined_nosil/train
+  utils/filter_scp.pl $data/swbd_sre_combined_nosil/train/utt2spk $data/swbd_sre_combined_nosil/utt2num_frames > $data/swbd_sre_combined_nosil/train/utt2num_frames
   utils/fix_data_dir.sh $data/swbd_sre_combined_nosil/train
 
   # In the training, we need an additional file `spklist` to map the speakers to the indices.

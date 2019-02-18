@@ -2,7 +2,6 @@ import tensorflow as tf
 import os
 import random
 import numpy as np
-import time
 from multiprocessing import Process, Queue, Event
 from dataset.kaldi_io import FeatureReader
 from six.moves import range
@@ -26,6 +25,8 @@ def get_speaker_info(data, spklist):
         features2spk: A dict. The key is the segment and the value is the corresponding speaker id.
         spk2index: A dict from speaker NAME to speaker ID. This is useful to get the number of speakers. Because
                    sometimes, the speakers are not all included in the data directory (like in the valid set).
+
+        segment format: "utt_name filename:offset"
     """
     assert (os.path.isdir(data) and os.path.isfile(spklist))
     spk2index = {}
@@ -49,8 +50,8 @@ def get_speaker_info(data, spklist):
             spk = utt2spk[key]
             if spk not in spk2features:
                 spk2features[spk] = []
-            spk2features[spk].append(rxfile)
-            features2spk[rxfile] = spk
+            spk2features[spk].append(key + ' ' + rxfile)
+            features2spk[key + ' ' + rxfile] = spk
     return spk2features, features2spk, spk2index
 
 
@@ -93,7 +94,7 @@ def get_aux_speaker_info(data, aux_data, spklist):
                 (key, rxfile) = line.decode().split(' ')
                 if key not in aux_utt2features:
                     aux_utt2features[key] = {}
-                aux_utt2features[key][name] = rxfile
+                aux_utt2features[key][name] = key + ' ' + rxfile
 
     spk2features = {}
     features2spk = {}
@@ -103,8 +104,8 @@ def get_aux_speaker_info(data, aux_data, spklist):
             spk = utt2spk[key]
             if spk not in spk2features:
                 spk2features[spk] = []
-            features2spk[rxfile] = spk
-            aux_utt2features[key]["features"] = rxfile
+            features2spk[key + ' ' + rxfile] = spk
+            aux_utt2features[key]["features"] = key + ' ' + rxfile
             spk2features[spk].append(aux_utt2features[key])
     return spk2features, features2spk, spk2index
 
@@ -266,20 +267,34 @@ def batch_random(stop_event,
         print(
             "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
         speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
+    # Now we have enough speakers
     while not stop_event.is_set():
         batch_speakers = rd.sample(speakers, num_speakers)
         batch_length = rd.randint(min_len, max_len)
         features = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
         for i, speaker in enumerate(batch_speakers):
-            labels[i * num_segments:(i + 1) * num_segments] = speaker
-            feature_list = spk2features[speaker]
+            # The length may be larger than the utterance length. A check should be applied first.
+            feature_list = []
+            spk = speaker
+            while len(feature_list) == 0:
+                feature_list = []
+                for feat in spk2features[spk]:
+                    if feature_reader.utt2num_frames[feat.split(' ')[0]] > batch_length:
+                        feature_list.append(feat)
+                if len(feature_list) == 0:
+                    # The speaker is not appropriate for this batch. Resample the speaker
+                    spk = rd.choice(list(set(speakers) - set(batch_speakers)))
+                    batch_speakers[i] = spk
+
+            labels[i * num_segments:(i + 1) * num_segments] = spk
+            # If the number is not enough
             if len(feature_list) < num_segments:
                 feature_list *= (int(num_segments / len(feature_list)) + 1)
             # Now the length of the list must be greater than the sample size.
             speaker_features = rd.sample(feature_list, num_segments)
             for j, feat in enumerate(speaker_features):
-                features[i * num_segments + j, :, :], _ = feature_reader.read(feat, batch_length, shuffle=shuffle)
+                features[i * num_segments + j, :, :], _ = feature_reader.read_segment(feat, batch_length, shuffle=shuffle)
         queue.put((features, labels))
 
     time.sleep(3)
@@ -428,13 +443,20 @@ def batch_sequence(stop_event,
     rd.jumpahead(seed)
 
     feature_reader = FeatureReader(data)
-    num_batches = len(feature_list) / batch_size
+    num_batches = int(len(feature_list) / batch_size)
     for i in range(num_batches):
         batch_length = rd.randint(min_len, max_len)
+
+        # In some cases, the minimum length of the utterances is smaller than the batch length.
+        # Use the smallest length as the real batch length.
+        for j in range(batch_size):
+            if feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]] < batch_length:
+                batch_length = feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]]
+
         features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((batch_size), dtype=np.int32)
         for j in range(batch_size):
-            features[j, :, :], _ = feature_reader.read(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
+            features[j, :, :], _ = feature_reader.read_segment(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
             labels[j] = features2spk[feature_list[i * batch_size + j]]
         queue.put((features, labels))
     stop_event.set()
@@ -606,9 +628,22 @@ def multi_batch_random(stop_event,
             features[name] = np.zeros((num_speakers * num_segments, batch_length, feature_reader[name].dim),
                                       dtype=np.float32)
         labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
+
         for i, speaker in enumerate(batch_speakers):
-            labels[i * num_segments:(i + 1) * num_segments] = speaker
-            feature_list = spk2features[speaker]
+            # The length may be larger than the utterance length. A check should be applied first.
+            feature_list = []
+            spk = speaker
+            while len(feature_list) == 0:
+                feature_list = []
+                for feat in spk2features[spk]:
+                    if feature_reader["features"].utt2num_frames[feat["features"].split(' ')[0]] > batch_length:
+                        feature_list.append(feat)
+                if len(feature_list) == 0:
+                    # The speaker is not appropriate for this batch. Resample the speaker
+                    spk = rd.choice(list(set(speakers) - set(batch_speakers)))
+                    batch_speakers[i] = spk
+
+            labels[i * num_segments:(i + 1) * num_segments] = spk
             if len(feature_list) < num_segments:
                 feature_list *= (int(num_segments / len(feature_list)) + 1)
             # Now the length of the list must be greater than the sample size.
@@ -616,14 +651,14 @@ def multi_batch_random(stop_event,
 
             for j, feat in enumerate(speaker_features):
                 # Load features first.
-                features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read(feat["features"],
+                features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read_segment(feat["features"],
                                                                                                               batch_length,
                                                                                                               shuffle=shuffle)
-                # Other features should follow the same start points
                 for name in feature_reader:
                     if name == "features":
                         continue
-                    features[name][i * num_segments + j, :, :], _ = feature_reader[name].read(feat[name], batch_length, start=start_pos)
+                    features[name][i * num_segments + j, :, :], _ = feature_reader[name].read_segment(feat[name], batch_length, start=start_pos)
+
         queue.put((features, labels))
 
     time.sleep(3)
@@ -710,22 +745,26 @@ def multi_batch_sequence(stop_event,
     for name in aux_data:
         feature_reader[name] = FeatureReader(aux_data[name])
 
-    num_batches = len(feature_list) / batch_size
+    num_batches = int(len(feature_list) / batch_size)
     for i in range(num_batches):
         batch_length = rd.randint(min_len, max_len)
+        for j in range(batch_size):
+            if feature_reader["features"].utt2num_frames[feature_list[i * batch_size + j]["features"].split(' ')[0]] < batch_length:
+                batch_length = feature_reader["features"].utt2num_frames[feature_list[i * batch_size + j]["features"].split(' ')[0]]
+
         features = {}
         for name in feature_reader:
             features[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
         labels = np.zeros((batch_size), dtype=np.int32)
         for j in range(batch_size):
             # Load the features first
-            features["features"][j, :, :], start_pos = feature_reader["features"].read(feature_list[i * batch_size + j]["features"],
+            features["features"][j, :, :], start_pos = feature_reader["features"].read_segment(feature_list[i * batch_size + j]["features"],
                                                                                        batch_length,
                                                                                        shuffle=shuffle)
             for name in feature_reader:
                 if name == "features":
                     continue
-                features[name][j, :, :], _ = feature_reader[name].read(feature_list[i * batch_size + j][name], batch_length, start=start_pos)
+                features[name][j, :, :], _ = feature_reader[name].read_segment(feature_list[i * batch_size + j][name], batch_length, start=start_pos)
             labels[j] = features2spk[feature_list[i * batch_size + j]["features"]]
         queue.put((features, labels))
     stop_event.set()
@@ -788,160 +827,255 @@ class KaldiMultiDataSeqQueue(KaldiDataSeqQueue):
 
 
 if __name__ == "__main__":
+    data_simple = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/softmax_valid"
+    spklist_simple = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/train/spklist"
     data = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/end2end_valid"
-    aux_data_dir = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/test_aux_data"
     spklist = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/end2end_valid/spklist"
+    aux_data_dir = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/test_aux_data"
     num_loads = 10
     import time
-
-    # # Using KaldiDataRandomReader (tf.data)
-    # data_loader = KaldiDataRandomReader(data, spklist, num_parallel=1)
-    # data_loader.set_batch(64, 10)
-    # data_loader.set_length(200, 400)
-    # with tf.Session() as sess:
-    #     features, labels = data_loader.load_dataset()
-    #     print("start...")
-    #     start_time = time.time()
-    #     for _ in range(num_loads):
-    #         features_val, labels_val = sess.run([features, labels])
-    #     end_time = time.time()
-    #     print("Time: %.4f s" % (end_time - start_time))
-
-    # # Using KaldiDataQueue (multiprocessing)
-    # # Although this will introduce CPU-GPU transfer overhead, it seems to be much faster.
-    # data_loader = KaldiDataRandomQueue(data, spklist, num_parallel=8, max_qsize=10, num_speakers=64, num_segments=10, min_len=200, max_len=400, shuffle=True)
-    # with tf.Session() as sess:
-    #     ts = time.time()
-    #     features = tf.placeholder(tf.float32, shape=[None, None, None])
-    #     labels = tf.placeholder(tf.int32, shape=[None])
-    #     features += 1
-    #     data_loader.start()
-    #     for _ in range(num_loads):
-    #         features_val, labels_val = data_loader.fetch()
-    #         features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
-    #                                                                              labels: labels_val})
-    #     te = time.time() - ts
-    #     data_loader.stop()
-    #     print("Time: %.4f s" % te)
-    #
-    # # Using KaldiDataSeqQueue
-    # data_loader = KaldiDataSeqQueue(data, spklist, num_parallel=8, max_qsize=10, batch_size=128, min_len=200, max_len=400, shuffle=True)
-    # with tf.Session() as sess:
-    #     features = tf.placeholder(tf.float32, shape=[None, None, None])
-    #     labels = tf.placeholder(tf.int32, shape=[None])
-    #     features += 1
-    #     data_loader.start()
-    #     index = 1
-    #     while True:
-    #         try:
-    #             features_val, labels_val = data_loader.fetch()
-    #             features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
-    #                                                                                  labels: labels_val})
-    #             print(index*128)
-    #             index += 1
-    #         except DataOutOfRange:
-    #             break
-    #     data_loader.stop()
-
-    # # Test basic functions in KaldiMultiDataRandomQueue and KaldiMultiDataSeqQueue
-    # num_speakers = 64
-    # num_segments = 1
-    # min_len = 100
-    # max_len = 200
-    # batch_size = 64
-    # shuffle = True
-    #
-    # aux_data = {}
-    # for dirname in os.listdir(aux_data_dir):
-    #     if os.path.isdir(os.path.join(aux_data_dir, dirname)):
-    #         aux_data[dirname] = os.path.join(aux_data_dir, dirname)
-    # spk2features, features2spk, spk2index = get_aux_speaker_info(data, aux_data, spklist)
-    #
-    # feature_reader = {}
-    # feature_reader["features"] = FeatureReader(data)
-    # for name in aux_data:
-    #     feature_reader[name] = FeatureReader(aux_data[name])
-    # speakers = list(spk2features.keys())
-    # num_total_speakers = len(list(spk2index.keys()))
-    # if num_total_speakers < num_speakers:
-    #     print(
-    #         "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
-    #     speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
-    # rd = random.Random(os.urandom(4))
-    # batch_speakers = rd.sample(speakers, num_speakers)
-    # batch_length = rd.randint(min_len, max_len)
-    # features = {}
-    # for name in feature_reader:
-    #     features[name] = np.zeros((num_speakers * num_segments, batch_length, feature_reader[name].dim),
-    #                               dtype=np.float32)
-    # labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
-    # for i, speaker in enumerate(batch_speakers):
-    #     labels[i * num_segments:(i + 1) * num_segments] = speaker
-    #     feature_list = spk2features[speaker]
-    #     if len(feature_list) < num_segments:
-    #         feature_list *= (int(num_segments / len(feature_list)) + 1)
-    #     # Now the length of the list must be greater than the sample size.
-    #     speaker_features = rd.sample(feature_list, num_segments)
-    #
-    #     for j, feat in enumerate(speaker_features):
-    #         features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read(
-    #             feat["features"],
-    #             batch_length,
-    #             shuffle=shuffle)
-    #         for name in feature_reader:
-    #             if name == "features":
-    #                 continue
-    #             features[name][i * num_segments + j, :, :], _ = feature_reader[name].read(feat[name], batch_length,
-    #                                                                                       start=start_pos)
-    # # Test the consistency of the featuers (the starting points)
-    # for name in feature_reader:
-    #     assert np.allclose(features[name], features["features"])
-    #
-    # rd = random.Random(os.urandom(4))
-    # aux_data = {}
-    # for dirname in os.listdir(aux_data_dir):
-    #     if os.path.isdir(os.path.join(aux_data_dir, dirname)):
-    #         aux_data[dirname] = os.path.join(aux_data_dir, dirname)
-    # spk2features, features2spk, spk2index = get_aux_speaker_info(data, aux_data, spklist)
-    # feature_list = []
-    # sub_feature_list = []
-    # for spk in spk2features:
-    #     feature_list += spk2features[spk]
-    # num_parallel = 1
-    # random.shuffle(feature_list)
-    # num_sub_features = len(feature_list) / num_parallel
-    # for i in range(num_parallel):
-    #     if i == num_parallel - 1:
-    #         sub_feature_list.append(feature_list[i * num_sub_features:])
-    #     else:
-    #         sub_feature_list.append(feature_list[i * num_sub_features:(i + 1) * num_sub_features])
-    # feature_list = sub_feature_list[0]
-    # feature_reader = {}
-    # feature_reader["features"] = FeatureReader(data)
-    # for name in aux_data:
-    #     feature_reader[name] = FeatureReader(aux_data[name])
-    #
-    # num_batches = len(feature_list) / batch_size
-    # for i in range(num_batches/100):
-    #     batch_length = rd.randint(min_len, max_len)
-    #     features = {}
-    #     for name in feature_reader:
-    #         features[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
-    #     labels = np.zeros((batch_size), dtype=np.int32)
-    #
-    #     for j in range(batch_size):
-    #         features["features"][j, :, :], start_pos = feature_reader["features"].read(feature_list[i * batch_size + j]["features"],
-    #                                                                                    batch_length,
-    #                                                                                    shuffle=shuffle)
-    #         for name in feature_reader:
-    #             if name == "features":
-    #                 continue
-    #             features[name][j, :, :], _ = feature_reader[name].read(feature_list[i * batch_size + j][name], batch_length, start=start_pos)
-    #         labels[j] = features2spk[feature_list[i * batch_size + j]["features"]]
-    #     for name in feature_reader:
-    #         assert np.allclose(features[name], features["features"])
-
     import pdb
+
+    num_speakers = 16
+    num_segments = 1
+    min_len = 200
+    max_len = 400
+    batch_size = num_speakers * num_segments
+    shuffle = False
+    spk2features, features2spk, spk2index = get_speaker_info(data, spklist)
+    num_total_speakers = len(list(spk2index.keys()))
+
+    rd = random.Random(os.urandom(4))
+    feature_reader = FeatureReader(data)
+    speakers = list(spk2features.keys())
+    if num_total_speakers < num_speakers:
+        print(
+            "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
+        speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
+
+    # Single input and single output.
+
+    batch_speakers = rd.sample(speakers, num_speakers)
+    batch_length = rd.randint(min_len, max_len)
+    features = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
+    features_comp = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
+    labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
+    for i, speaker in enumerate(batch_speakers):
+        # The length may be larger than the utterance length. A check should be applied first.
+        feature_list = []
+        spk = speaker
+        while len(feature_list) == 0:
+            feature_list = []
+            for feat in spk2features[spk]:
+                if feature_reader.utt2num_frames[feat.split(' ')[0]] > batch_length:
+                    feature_list.append(feat)
+            if len(feature_list) == 0:
+                # The speaker is not appropriate for this batch. Resample the speaker
+                spk = rd.choice(list(set(speakers) - set(batch_speakers)))
+                batch_speakers[i] = spk
+
+        labels[i * num_segments:(i + 1) * num_segments] = spk
+        # If the number is not enough
+        if len(feature_list) < num_segments:
+            feature_list *= (int(num_segments / len(feature_list)) + 1)
+        # Now the length of the list must be greater than the sample size.
+        speaker_features = rd.sample(feature_list, num_segments)
+        for j, feat in enumerate(speaker_features):
+            features[i * num_segments + j, :, :], start_pos = feature_reader.read_segment(feat, batch_length, shuffle=shuffle)
+            features_comp[i * num_segments + j, :, :], _ = feature_reader.read(feat, batch_length, start=start_pos)
+
+    pdb.set_trace()
+    assert np.allclose(features, features_comp)
+    print(labels)
+
+    feature_list = []
+    for spk in spk2features:
+        feature_list += spk2features[spk]
+    num_batches = len(feature_list) / batch_size
+    for i in range(10):
+        batch_length = rd.randint(min_len, max_len)
+
+        # In some cases, the minimum length of the utterances is smaller than the batch length.
+        # Use the smallest length as the real batch length.
+        for j in range(batch_size):
+            if feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]] < batch_length:
+                batch_length = feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]]
+
+        features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
+        features_comp = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
+        labels = np.zeros((batch_size), dtype=np.int32)
+        for j in range(batch_size):
+            features[j, :, :], start_pos = feature_reader.read_segment(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
+            features_comp[j, :, :], _ = feature_reader.read(feature_list[i * batch_size + j], batch_length, start=start_pos)
+            labels[j] = features2spk[feature_list[i * batch_size + j]]
+
+    pdb.set_trace()
+    assert np.allclose(features, features_comp)
+    print(labels)
+
+    # Using KaldiDataQueue (multiprocessing)
+    # Although this will introduce CPU-GPU transfer overhead, it seems to be much faster.
+    data_loader = KaldiDataRandomQueue(data_simple, spklist_simple, num_parallel=8, max_qsize=10, num_speakers=64, num_segments=1, min_len=2000, max_len=2000, shuffle=True)
+    with tf.Session() as sess:
+        ts = time.time()
+        features = tf.placeholder(tf.float32, shape=[None, None, None])
+        labels = tf.placeholder(tf.int32, shape=[None])
+        features += 1
+        data_loader.start()
+        for _ in range(num_loads):
+            features_val, labels_val = data_loader.fetch()
+            features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
+                                                                                 labels: labels_val})
+        te = time.time() - ts
+        data_loader.stop()
+        print("Time: %.4f s" % te)
+        pdb.set_trace()
+        print(labels_test)
+
+    data_loader = KaldiDataSeqQueue(data, spklist, num_parallel=8, max_qsize=10, batch_size=64, min_len=200, max_len=400, shuffle=True)
+    with tf.Session() as sess:
+        features = tf.placeholder(tf.float32, shape=[None, None, None])
+        labels = tf.placeholder(tf.int32, shape=[None])
+        features += 1
+        data_loader.start()
+        index = 1
+        while index < 10:
+            try:
+                features_val, labels_val = data_loader.fetch()
+                features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
+                                                                                     labels: labels_val})
+                index += 1
+            except DataOutOfRange:
+                break
+        data_loader.stop()
+        pdb.set_trace()
+        print(labels_test)
+
+    # Multiple input
+
+    aux_data = {}
+    for dirname in os.listdir(aux_data_dir):
+        if os.path.isdir(os.path.join(aux_data_dir, dirname)):
+            aux_data[dirname] = os.path.join(aux_data_dir, dirname)
+    spk2features, features2spk, spk2index = get_aux_speaker_info(data, aux_data, spklist)
+
+    feature_reader = {}
+    feature_reader["features"] = FeatureReader(data)
+    for name in aux_data:
+        feature_reader[name] = FeatureReader(aux_data[name])
+
+    speakers = list(spk2features.keys())
+    if num_total_speakers < num_speakers:
+        print(
+            "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
+        speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
+
+    batch_speakers = rd.sample(speakers, num_speakers)
+    batch_length = rd.randint(min_len, max_len)
+    features = {}
+    for name in feature_reader:
+        features[name] = np.zeros((num_speakers * num_segments, batch_length, feature_reader[name].dim),
+                                  dtype=np.float32)
+    features_comp = {}
+    for name in feature_reader:
+        features_comp[name] = np.zeros((num_speakers * num_segments, batch_length, feature_reader[name].dim),
+                                  dtype=np.float32)
+    labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
+
+    for i, speaker in enumerate(batch_speakers):
+        # The length may be larger than the utterance length. A check should be applied first.
+        feature_list = []
+        spk = speaker
+        while len(feature_list) == 0:
+            feature_list = []
+            for feat in spk2features[spk]:
+                if feature_reader["features"].utt2num_frames[feat["features"].split(' ')[0]] > batch_length:
+                    feature_list.append(feat)
+            if len(feature_list) == 0:
+                # The speaker is not appropriate for this batch. Resample the speaker
+                spk = rd.choice(list(set(speakers) - set(batch_speakers)))
+                batch_speakers[i] = spk
+
+        labels[i * num_segments:(i + 1) * num_segments] = spk
+        if len(feature_list) < num_segments:
+            feature_list *= (int(num_segments / len(feature_list)) + 1)
+        # Now the length of the list must be greater than the sample size.
+        speaker_features = rd.sample(feature_list, num_segments)
+
+        for j, feat in enumerate(speaker_features):
+            # Load features first.
+            features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read_segment(
+                feat["features"],
+                batch_length,
+                shuffle=shuffle)
+            for name in feature_reader:
+                if name == "features":
+                    continue
+                features[name][i * num_segments + j, :, :], _ = feature_reader[name].read_segment(feat[name], batch_length,
+                                                                                              start=start_pos)
+
+            features_comp["features"][i * num_segments + j, :, :], _ = feature_reader["features"].read(
+                feat["features"],
+                batch_length,
+                start=start_pos)
+            for name in feature_reader:
+                if name == "features":
+                    continue
+                features_comp[name][i * num_segments + j, :, :], _ = feature_reader[name].read(feat[name], batch_length,
+                                                                                          start=start_pos)
+
+    # Test the consistency of the featuers (the starting points)
+    for name in feature_reader:
+        assert np.allclose(features[name], features_comp[name])
+        assert np.allclose(features[name], features["features"])
+    print(labels)
+
+    feature_list = []
+    for spk in spk2features:
+        feature_list += spk2features[spk]
+    num_batches = int(len(feature_list) / batch_size)
+    pdb.set_trace()
+    for i in range(10):
+        batch_length = rd.randint(min_len, max_len)
+        for j in range(batch_size):
+            if feature_reader["features"].utt2num_frames[feature_list[i * batch_size + j]["features"].split(' ')[0]] < batch_length:
+                batch_length = feature_reader["features"].utt2num_frames[feature_list[i * batch_size + j]["features"].split(' ')[0]]
+
+        features = {}
+        for name in feature_reader:
+            features[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
+        features_comp = {}
+        for name in feature_reader:
+            features_comp[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
+        labels = np.zeros((batch_size), dtype=np.int32)
+        for j in range(batch_size):
+            # Load the features first
+            features["features"][j, :, :], start_pos = feature_reader["features"].read_segment(
+                feature_list[i * batch_size + j]["features"],
+                batch_length,
+                shuffle=shuffle)
+            for name in feature_reader:
+                if name == "features":
+                    continue
+                features[name][j, :, :], _ = feature_reader[name].read_segment(feature_list[i * batch_size + j][name],
+                                                                       batch_length, start=start_pos)
+            features_comp["features"][j, :, :], _ = feature_reader["features"].read(
+                feature_list[i * batch_size + j]["features"],
+                batch_length,
+                start=start_pos)
+            for name in feature_reader:
+                if name == "features":
+                    continue
+                features_comp[name][j, :, :], _ = feature_reader[name].read(feature_list[i * batch_size + j][name],
+                                                                       batch_length, start=start_pos)
+            labels[j] = features2spk[feature_list[i * batch_size + j]["features"]]
+
+    pdb.set_trace()
+    for name in feature_reader:
+        assert np.allclose(features[name], features_comp[name])
+        assert np.allclose(features[name], features["features"])
+    print(labels)
+
     data_loader = KaldiMultiDataRandomQueue(data, aux_data_dir, spklist, num_parallel=10)
     data_loader.set_batch(64, 1)
     data_loader.set_length(200, 400)
@@ -949,12 +1083,19 @@ if __name__ == "__main__":
     for _ in range(num_loads):
         features_val, labels_val = data_loader.fetch()
     data_loader.stop()
+    pdb.set_trace()
+    print(labels_val)
+    for name in features_val:
+        assert np.allclose(features_val[name], features_val["features"])
 
     data_loader = KaldiMultiDataSeqQueue(data, aux_data_dir, spklist)
     data_loader.set_batch(64)
     data_loader.set_length(200, 400)
     data_loader.start()
     for _ in range(num_loads):
-        pdb.set_trace()
         features_val, labels_val = data_loader.fetch()
     data_loader.stop()
+    pdb.set_trace()
+    print(labels_val)
+    for name in features_val:
+        assert np.allclose(features_val[name], features_val["features"])

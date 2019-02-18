@@ -179,6 +179,7 @@ if [ $stage -le 6 ]; then
   utils/filter_scp.pl $end2end_valid_dir/valid_candidate $data/voxceleb_train_combined_no_sil/spk2utt | utils/shuffle_list.pl | head -$num_heldout_spks > $end2end_valid_dir/spk2utt || exit 1
   utils/spk2utt_to_utt2spk.pl $end2end_valid_dir/spk2utt > $end2end_valid_dir/utt2spk
   cp $data/voxceleb_train_combined_no_sil/feats.scp $end2end_valid_dir
+  utils/filter_scp.pl $end2end_valid_dir/utt2spk $data/voxceleb_train_combined_no_sil/utt2num_frames > $end2end_valid_dir/utt2num_frames
   utils/fix_data_dir.sh $end2end_valid_dir
 
   echo "$0: Preparing softmax loss validation lists"
@@ -194,10 +195,12 @@ if [ $stage -le 6 ]; then
   utils/filter_scp.pl $softmax_valid_dir/valid_candidate $train_dir/utt2spk | utils/shuffle_list.pl | head -$num_heldout_utts > $softmax_valid_dir/utt2spk || exit 1;
   utils/utt2spk_to_spk2utt.pl $softmax_valid_dir/utt2spk > $softmax_valid_dir/spk2utt
   cp $data/voxceleb_train_combined_no_sil/feats.scp $softmax_valid_dir
+  utils/filter_scp.pl $softmax_valid_dir/utt2spk $data/voxceleb_train_combined_no_sil/utt2num_frames > $softmax_valid_dir/utt2num_frames
   utils/fix_data_dir.sh $softmax_valid_dir
 
   utils/filter_scp.pl --exclude $softmax_valid_dir/utt2spk $train_dir/utt2spk > $train_dir/utt2spk.new
   mv $train_dir/utt2spk.new $train_dir/utt2spk
+  utils/filter_scp.pl $train_dir/utt2spk $data/voxceleb_train_combined_no_sil/utt2num_frames > $train_dir/utt2num_frames
   utils/fix_data_dir.sh $train_dir
 
   # In the training, we need an additional file `spklist` to map the speakers to the indices.
