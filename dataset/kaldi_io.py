@@ -9,6 +9,7 @@
 import numpy as np
 import sys, os, re, gzip, struct
 import random
+from six.moves import range
 
 #################################################
 # Adding kaldi tools to shell path,
@@ -52,14 +53,14 @@ class FeatureReader():
 
     def get_dim(self):
         with open(os.path.join(self.data, "feats.scp"), "r") as f:
-            dim = self.read(f.readline().strip().split(" ")[1]).shape[1]
+            dim = self.read(f.readline().strip().split(" ")[1])[0].shape[1]
         return dim
 
     def close(self):
         for name in self.fd:
             self.fd[name].close()
 
-    def read(self, file_or_fd, length=None, shuffle=False):
+    def read(self, file_or_fd, length=None, shuffle=False, start=None):
         """ [mat] = read_mat(file_or_fd)
          Reads single kaldi matrix, supports ascii and binary.
          file_or_fd : file, gzipped file, pipe or opened file descriptor.
@@ -89,11 +90,15 @@ class FeatureReader():
             raise IOError("Cannot read features from %s" % file_or_fd)
 
         if length is not None:
-            num_features = mat.shape[0]
-            length = num_features if length > num_features else length
-            start = random.randint(0, num_features - length) if shuffle else 0
-            mat = mat[start:start+length, :]
-        return mat
+            if start is None:
+                num_features = mat.shape[0]
+                length = num_features if length > num_features else length
+                start = random.randint(0, num_features - length) if shuffle else 0
+                mat = mat[start:start + length, :]
+            else:
+                assert not shuffle, "The start point is specified, thus shuffling is invalid."
+                mat = mat[start:start + length, :]
+        return mat, start
 
 
 #################################################
@@ -831,7 +836,7 @@ if __name__ == "__main__":
     time1 = 0
     time2 = 0
     time3 = 0
-    for _ in xrange(2):
+    for _ in range(2):
         num_samples = 640
         batch_length = random.randint(200, 400)
         selected = random.sample(feats_scp, num_samples)

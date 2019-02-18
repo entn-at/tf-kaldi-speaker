@@ -1,6 +1,6 @@
 import tensorflow as tf
 from collections import OrderedDict
-
+from six.moves import range
 
 def shape_list(x):
     """Return list of dims, statically where possible."""
@@ -14,7 +14,7 @@ def shape_list(x):
     shape = tf.shape(x)
 
     ret = []
-    for i in xrange(len(static)):
+    for i in range(len(static)):
         dim = static[i]
         if dim is None:
             dim = shape[i]
@@ -42,6 +42,7 @@ def prelu(x, name="prelu", shared=False):
 
 def l2_scaling(x, scaling_factor, epsilon=1e-12, name="l2_norm"):
     """Feature normalization before re-scaling along the last axis.
+       This function is the similar to tf.nn.l2_normalize, but scale to a scaling_factor rather than 1.
 
     Args:
         x: The input features.
@@ -53,14 +54,6 @@ def l2_scaling(x, scaling_factor, epsilon=1e-12, name="l2_norm"):
         x_inv_norm = tf.rsqrt(tf.maximum(square_sum, epsilon)) * scaling_factor
         x_scale = x * x_inv_norm
     return x_scale
-
-
-def l2_normalize(x):
-    """Normalize the last dimension vector of the input matrix"""
-    l2 = tf.reduce_sum(tf.square(x), axis=-1, keep_dims=True)
-    mask = tf.to_float(tf.less(l2, 1e-16))
-    norm = tf.sqrt(l2 + mask * 1e-16)
-    return x / norm
 
 
 def pairwise_euc_distances(embeddings, squared=False):
@@ -99,7 +92,23 @@ def pairwise_euc_distances(embeddings, squared=False):
     return distances
 
 
-def dense_layer(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+def pairwise_cos_similarity(embeddings, epsilon=1e-12):
+    """Compute the 2D matrix of cosine similarity between all the embeddings.
+
+    Args:
+        embeddings: input tensors.
+    :return: pairwise_cos: tensor of shape (batch_size, batch_size)
+    """
+    dot_product = tf.matmul(embeddings, tf.transpose(embeddings))
+    square_sum = tf.reduce_sum(tf.square(embeddings), axis=-1, keep_dims=True)
+    inv_norm = tf.rsqrt(tf.maximum(square_sum, epsilon))
+    inv_norm = tf.matmul(inv_norm, tf.transpose(inv_norm))
+    cos_similarity = tf.multiply(dot_product, inv_norm)
+    cos_similarity = tf.clip_by_value(cos_similarity, -1, 1)
+    return cos_similarity
+
+
+def dense_relu(features, num_nodes, endpoints, params, is_training=None, name="dense"):
     """Dense connected layer
 
     Args:
@@ -130,6 +139,29 @@ def dense_layer(features, num_nodes, endpoints, params, is_training=None, name="
     endpoints["%s_bn" % name] = features
     features = relu(features, name='%s_relu' % name)
     endpoints["%s_relu" % name] = features
+    return features
+
+
+def dense_tanh(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+    """Dense connected layer (affine + tanh)
+
+    Args:
+        features: The input features.
+        num_nodes: The number of the nodes in this layer.
+        endpoints: The endpoitns.
+        params: Parameters.
+        is_training:
+        name:
+    :return: The output of the layer. The endpoints also contains the intermediate outputs of this layer.
+    """
+    features = tf.layers.dense(features,
+                               num_nodes,
+                               activation=None,
+                               kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                               name="%s_dense" % name)
+    endpoints["%s_dense" % name] = features
+    features = tf.nn.tanh(features, name='%s_tanh' % name)
+    endpoints["%s_tanh" % name] = features
     return features
 
 

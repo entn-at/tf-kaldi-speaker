@@ -2,6 +2,7 @@ import tensorflow as tf
 from model.pooling import statistics_pooling, self_attention, linguistic_attention
 from model.common import prelu
 from collections import OrderedDict
+from six.moves import range
 
 
 def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=None):
@@ -88,6 +89,8 @@ def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=
 
         # Convert to [b, l, 512]
         features = tf.squeeze(features, axis=1)
+        # The output of the 3-rd layer can simply be rank 3.
+        endpoints["tdnn3_relu"] = features
 
         # Layer 4: [b, l, 512] --> [b, l, 512]
         features = tf.layers.dense(features,
@@ -188,6 +191,8 @@ def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=
 
 if __name__ == "__main__":
     num_labels = 10
+    num_speakers = 10
+    num_segments_per_speaker = 10
     num_data = 100
     num_length = 100
     num_dim = 512
@@ -225,7 +230,6 @@ if __name__ == "__main__":
     params.dict["arcsoftmax_lambda_base"] = 1000
     params.dict["arcsoftmax_lambda_gamma"] = 1
     params.dict["arcsoftmax_lambda_power"] = 4
-
 
     params.dict["feature_norm"] = True
     params.dict["feature_scaling_factor"] = 20
@@ -333,58 +337,15 @@ if __name__ == "__main__":
                 loss_np = compute_arcsoftmax(embeddings_val, labels_val, params, w_val)
                 assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
                 assert np.allclose(loss_val, loss_np)
-    quit()
 
-    # tdnn + generalized end2end loss
-    from model.loss import ge2e_loss
-    num_speakers = 64
-    num_segments_per_speaker = 10
-    num_data = num_speakers * num_segments_per_speaker
+    # semihard sampling triplet loss
+    from model.loss import semihard_triplet_loss
     params.dict["num_speakers_per_batch"] = num_speakers
     params.dict["num_segments_per_speaker"] = num_segments_per_speaker
-    params.dict["init_end2end_w"] = 10
-    params.dict["init_end2end_b"] = -5
-    params.dict["last_layer_linear"] = True
-    params.dict["ge2e_loss_type"] = "softmax"
-    outputs, endpoints = tdnn(features, params, is_training=True, reuse_variables=False)
-    loss = ge2e_loss(outputs, labels, 10, params, is_training=True, reuse_variables=False)
-
-    data = '/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/train/'
-    spklist = '/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/train/spklist'
-    from dataset.data_loader import KaldiDataRandomQueue
-    data_loader = KaldiDataRandomQueue(data, spklist,
-                                       num_parallel=4,
-                                       max_qsize=10,
-                                       num_speakers=params.num_speakers_per_batch,
-                                       num_segments=params.num_segments_per_speaker,
-                                       min_len=200,
-                                       max_len=400,
-                                       shuffle=True)
-    data_loader.start()
-
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        for _ in range(10):
-            features_val, labels_val = data_loader.fetch()
-            loss_val, embedding_val = sess.run([loss, outputs], feed_dict={features: features_val,
-                                                                           labels: labels_val})
-            from model.test_utils import compute_ge2e_loss
-            loss_np = compute_ge2e_loss(embedding_val, labels_val, params.init_end2end_w, params.init_end2end_b,
-                                        params.ge2e_loss_type)
-            assert np.allclose(loss_val, loss_np)
-    data_loader.stop()
-
-    # triplet loss
-    from model.loss import triplet_loss
-    num_speakers = 32
-    num_segments_per_speaker = 10
-    num_data = num_speakers * num_segments_per_speaker
-    params.dict["num_speakers_per_batch"] = num_speakers
-    params.dict["num_segments_per_speaker"] = num_segments_per_speaker
-    params.dict["margin"] = 0.5
+    params.dict["margin"] = 0.2
     for squared in [True, False]:
         params.dict["triplet_loss_squared"] = squared
-        loss = triplet_loss(embeddings, labels, 10, params)
+        loss = semihard_triplet_loss(embeddings, labels, 10, params)
         grads = tf.gradients(loss, embeddings)
 
         embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
@@ -402,3 +363,64 @@ if __name__ == "__main__":
                                                                     labels: labels_val})
             assert not np.any(np.isnan(grad_val)), "Gradient should not be nan"
             assert np.allclose(loss_val, loss_np)
+    #
+    from model.common import pairwise_cos_similarity
+    from model.loss import angular_triplet_loss
+    from model.test_utils import pairwise_cos_similarity_np, asoftmax_angular_triplet_loss
+    from model.test_utils import amsoftmax_angular_triplet_loss, arcsoftmax_angular_triplet_loss
+
+    embeddings_val = np.random.rand(num_data, num_dim).astype(np.float32)
+    embeddings_val[1, :] = embeddings_val[0, :]
+    embeddings_val[2, :] = -embeddings_val[0, :]
+    labels_val = np.zeros(num_data, dtype=np.int32)
+    for i in range(num_speakers):
+        labels_val[i * num_segments_per_speaker:(i + 1) * num_segments_per_speaker] = i
+    cos_sim = pairwise_cos_similarity(embeddings)
+    with tf.Session() as sess:
+        cos_sim_tf = sess.run(cos_sim, feed_dict={embeddings: embeddings_val})
+        cos_sim_np = pairwise_cos_similarity_np(embeddings_val)
+        assert np.allclose(cos_sim_np, cos_sim_tf)
+
+    # The following test may fail due to the precision. Does not really matter.
+
+    # asoftmax
+    print("asoftmax triplet loss")
+    for triplet_type in ["all", "hard"]:
+        for margin in [1, 2, 4]:
+            params.dict["margin"] = margin
+            params.dict["triplet_type"] = triplet_type
+            params.dict["loss_type"] = "asoftmax"
+            loss = angular_triplet_loss(embeddings, labels, None, params)
+            with tf.Session() as sess:
+                loss_tf = sess.run(loss, feed_dict={embeddings: embeddings_val,
+                                                    labels: labels_val})
+                loss_np = asoftmax_angular_triplet_loss(embeddings_val, labels_val, margin, triplet_type)
+                assert np.allclose(loss_np, loss_tf)
+
+    # amsoftmax
+    print("amsoftmax triplet loss")
+    for triplet_type in ["all", "hard"]:
+        margin = 0.3
+        params.dict["margin"] = margin
+        params.dict["triplet_type"] = triplet_type
+        params.dict["loss_type"] = "additive_margin_softmax"
+        loss = angular_triplet_loss(embeddings, labels, None, params)
+        with tf.Session() as sess:
+            loss_tf = sess.run(loss, feed_dict={embeddings: embeddings_val,
+                                                labels: labels_val})
+            loss_np = amsoftmax_angular_triplet_loss(embeddings_val, labels_val, margin, triplet_type)
+            assert np.allclose(loss_np, loss_tf)
+
+    # arcsoftmax
+    print("arcsoftmax triplet loss")
+    for triplet_type in ["all", "hard"]:
+        margin = 0.3
+        params.dict["margin"] = margin
+        params.dict["triplet_type"] = triplet_type
+        params.dict["loss_type"] = "additive_angular_margin_softmax"
+        loss = angular_triplet_loss(embeddings, labels, None, params)
+        with tf.Session() as sess:
+            loss_tf = sess.run(loss, feed_dict={embeddings: embeddings_val,
+                                                labels: labels_val})
+            loss_np = arcsoftmax_angular_triplet_loss(embeddings_val, labels_val, margin, triplet_type)
+            assert np.allclose(loss_np, loss_tf, rtol=1e-04)

@@ -4,6 +4,7 @@ from distutils.dir_util import copy_tree
 import os
 import sys
 import shutil
+from six.moves import range
 
 class Params():
     """Class that loads hyperparameters from a json file.
@@ -91,9 +92,14 @@ def save_codes_and_config(cont, model, config):
 
         # `model/codes` is used to save the codes and `model/nnet` is used to save the model and configuration
         os.makedirs(os.path.join(model, "codes"))
-        copy_tree("../../dataset/", os.path.join(model, "codes/dataset/"))
-        copy_tree("../../model/", os.path.join(model, "codes/model/"))
-        copy_tree("../../misc", os.path.join(model, "codes/misc/"))
+
+        # We need to set the home directory of the tf-kaldi-speaker (TF_KALDI_ROOT).
+        if not os.environ.get('TF_KALDI_ROOT'):
+            tf.logging.error("TF_KALDI_ROOT should be set before training.")
+            quit()
+        copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "dataset"), os.path.join(model, "codes/dataset/"))
+        copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "model"), os.path.join(model, "codes/model/"))
+        copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "misc"), os.path.join(model, "codes/misc/"))
         if not os.path.isdir(os.path.join(model, "nnet")):
             os.makedirs(os.path.join(model, "nnet"))
         shutil.copyfile(config, os.path.join(model, "nnet", "config.json"))
@@ -174,13 +180,13 @@ def load_valid_loss(filename):
     return min_loss
 
 
-def get_checkpoint(model, checkpoint=-1):
+def get_checkpoint(model, checkpoint='-1'):
     """Set the checkpoint in the model directory and return the name of the checkpoint
     Note: This function will modify `checkpoint` in the model directory.
 
     Args:
         model: The model directory.
-        checkpoint: The checkpoint id. If None, set to the BEST one.
+        checkpoint: The checkpoint id. If None, set to the BEST one. Also support "last"
     :return: The name of the checkpoint.
     """
     if not os.path.isfile(os.path.join(model, "checkpoint")):
@@ -195,24 +201,28 @@ def get_checkpoint(model, checkpoint=-1):
 
     steps = [int(c.rsplit('-', 1)[1]) for c in all_model_checkpoint_paths]
     steps = sorted(steps)
-    if checkpoint == -1:
-        # checkpoint = steps[-1]
-        tf.logging.info("Load the best model according to valid_loss")
-        min_epoch = -1
-        min_loss = 1e10
-        with open(os.path.join(model, "valid_loss")) as f:
-            for line in f.readlines():
-                epoch, loss, eer = line.split(" ")
-                epoch = int(epoch)
-                loss = float(loss)
-                if loss < min_loss:
-                    min_loss = loss
-                    min_epoch = epoch
-            # Add 1 to min_epoch since epoch is 0-based
-            config_json = os.path.join(model, "config.json")
-            params = Params(config_json)
-            checkpoint = (min_epoch + 1) * params.num_steps_per_epoch
-
+    if checkpoint == "last":
+        tf.logging.info("Load the last saved model.")
+        checkpoint = steps[-1]
+    else:
+        checkpoint = int(checkpoint)
+        if checkpoint == -1:
+            tf.logging.info("Load the best model according to valid_loss")
+            min_epoch = -1
+            min_loss = 1e10
+            with open(os.path.join(model, "valid_loss")) as f:
+                for line in f.readlines():
+                    epoch, loss, eer = line.split(" ")
+                    epoch = int(epoch)
+                    loss = float(loss)
+                    if loss < min_loss:
+                        min_loss = loss
+                        min_epoch = epoch
+                # Add 1 to min_epoch since epoch is 0-based
+                config_json = os.path.join(model, "config.json")
+                params = Params(config_json)
+                checkpoint = (min_epoch + 1) * params.num_steps_per_epoch
+    tf.logging.info("The checkpoint is %d" % checkpoint)
     assert checkpoint in steps, "The checkpoint %d not in the model directory" % checkpoint
 
     model_checkpoint_path = model_checkpoint_path.rsplit("-", 1)[0] + "-" + str(checkpoint)
@@ -240,7 +250,7 @@ def compute_cos_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
     from scipy.optimize import brentq
     from scipy.interpolate import interp1d
     import numpy as np
-    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True))
+    embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-12)
     num_embeddings = embeddings.shape[0]
     if num_embeddings > max_num_embeddings:
         # Downsample the embeddings and labels
@@ -288,3 +298,21 @@ def substring_in_list(s, varlist):
             is_sub = True
             break
     return is_sub
+
+
+def activation_summaries(endpoints):
+    """Create a summary for activations given the endpoints.
+
+    Args:
+        endpoints: The endpoints from the model.
+    :return: A tf summary.
+    """
+    sum = []
+    with tf.name_scope('summaries'):
+        for act in endpoints.values():
+            tensor_name = act.op.name
+            sum.append(tf.summary.histogram(tensor_name + '/activations', act))
+            # sum.append(tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(act)))
+    return tf.summary.merge(sum)
+
+

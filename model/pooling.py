@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model.common import shape_list, dense_layer, split_heads, combine_last_two_dimensions
+from model.common import shape_list, dense_relu, dense_tanh, split_heads, combine_last_two_dimensions
 import sys
 
 
@@ -35,7 +35,9 @@ def statistics_pooling(features, aux_features, endpoints, params, is_training):
 
 
 def self_attention(features, aux_features, endpoints, params, is_training=None):
-    """Self-attention
+    """Self-attention.
+    Note that the key should be the same length with the value, i.e. no convnet is applied after the key layer, or
+    some trimming strategy should be applied before the weighted sum. (Refer to linguistic_attention)
 
     Args:
         features: A tensor with shape [batch, length, dim].
@@ -58,24 +60,31 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
     assert "self_att_value_num_nodes" in params.dict
     assert "self_att_num_heads" in params.dict
     assert "self_att_penalty_term" in params.dict
-    value_features = features
-    key_features = endpoints[params.self_att_key_input]
 
     with tf.variable_scope("attention"):
-        for index, node in enumerate(params.self_att_key_num_nodes):
-            key_features = dense_layer(key_features, node, endpoints, params, is_training, name=("att_key%d" % index))
+        value_features = features
+        key_features = endpoints[params.self_att_key_input]
+
+        if len(params.self_att_key_num_nodes) != 0:
+            # According to "A STRUCTURED SELF-ATTENTIVE SENTENCE EMBEDDING",
+            # the last layer of the key network is `affine + tanh`.
+            if len(params.self_att_key_num_nodes) > 1:
+                for index, node in enumerate(params.self_att_key_num_nodes[:-1]):
+                    key_features = dense_relu(key_features, node, endpoints, params, is_training, name=("att_key%d" % index))
+            key_features = dense_tanh(key_features, params.self_att_key_num_nodes[-1], endpoints, params, is_training,
+                                      name=("att_key%d" % (len(params.self_att_key_num_nodes) - 1)))
 
         if len(params.self_att_value_num_nodes) != 0:
             tf.logging.info("Note: Add network to process the value input %s" % value_features.name)
             for index, node in enumerate(params.self_att_value_num_nodes):
-                value_features = dense_layer(value_features, node, endpoints, params, is_training, name=("att_value%d" % index))
+                value_features = dense_relu(value_features, node, endpoints, params, is_training, name=("att_value%d" % index))
 
         # The last element in self_att_key_num_nodes and self_att_value_num_nodes
         # is the dimension of the key and the value. In multi-head attention, they are extended n times.
         n_heads = params.self_att_num_heads
         assert shape_list(value_features)[2] % n_heads == 0, "The dim of the value must be divided by the num of heads."
 
-        # Split the value. The key can use the entire vector.
+        # Split the value. The key can use the entire key vector (without splitting).
         value_features = split_heads(value_features, n_heads)
         val_shape = shape_list(value_features)
         key_shape = shape_list(key_features)
@@ -114,19 +123,30 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
         penalty = tf.reduce_sum(tf.square(penalty))
         tf.add_to_collection("PENALTY", params.self_att_penalty_term * penalty)
 
-        # debug
-        endpoints["att_query"] = query
-        endpoints["att_key"] = key_features
-        endpoints["att_value"] = value_features
+        # # Debug
+        # # Comment lines when running the code
+        # endpoints["att_query"] = query
+        # endpoints["att_key"] = key_features
+        # endpoints["att_value"] = value_features
     return att
 
 
 def linguistic_attention(features, aux_features, endpoints, params, is_training=None):
     """Attention using linguistic features.
+    The attention layer has some minor problem that the length of the key may be different with the length of the value,
+    due to the convnet. The key usually has the original feature length while the length of the value is shorter.
+
+    A workaround is to use the center of the key to make length of the key and the value the same.
+    We always using the fully-connected layer in the key network, so the length remains the same.
+
+    Note: When auxiliary key is used, the hypothesis is that the length of this auxiliary feature is the same with the value.
 
     Args:
         features: A tensor with shape [batch, length, dim].
-        aux_features: A dict. Each entry has shape [batch, length, dim].
+        aux_features: A dict.
+        aux_featuers["linguistic"]: The length is LONGER than features!!!
+                                    The features is processed by convnet thus the length becomes shorter.
+        TODO: How to trim the auxiliary features? Align left or center?
         endpoints: Outputs of different parts of the network.
         params: Parameters for self-attention.
             params.att_aux_key_input: Additional key input except for the linguistic features.
@@ -145,25 +165,44 @@ def linguistic_attention(features, aux_features, endpoints, params, is_training=
     assert "att_value_num_nodes" in params.dict
     assert "att_num_heads" in params.dict
     assert "att_penalty_term" in params.dict
-    value_features = features
-    if "linguistic" not in aux_features:
-        sys.exit("The key linguistic is not in aux_features.")
-    key_features = aux_features["linguistic"]
-    tf.logging.info("Attention:\n")
-    if params.att_aux_key_input is not None:
-        if params.att_aux_key_input not in endpoints:
-            sys.exit("You specify the appended key %s, but I cannot find it in the endpoints." % params.att_aux_key_input)
-        tf.logging.info("Append %s to the linguistic features" % params.att_aux_key_input)
-        key_features = tf.concat([aux_features["linguistic"], endpoints[params.att_aux_key_input]], axis=-1, name="key_features")
 
     with tf.variable_scope("attention"):
-        for index, node in enumerate(params.att_key_num_nodes):
-            key_features = dense_layer(key_features, node, endpoints, params, is_training, name=("att_key%d" % index))
+        value_features = features
+        if "linguistic" not in aux_features:
+            sys.exit("The key linguistic is not in aux_features.")
+        key_features = aux_features["linguistic"]
+
+        # Center trimming. Use the center of the key to match the length of the value.
+        trim_length = (shape_list(key_features)[1] - shape_list(value_features)[1]) / 2
+        key_features = key_features[:, trim_length:-trim_length, :]
+        # # TODO: If the length of the key and the value is the same, the next line is useful.
+        # # But the above line looks more neat (What...).
+        # key_features = tf.cond(tf.equal(trim_length, 0),
+        #                        lambda: key_features,
+        #                        lambda: key_features[:, trim_length:-trim_length, :])
+
+        tf.logging.info("Attention:")
+        if params.att_aux_key_input is not None:
+            if params.att_aux_key_input not in endpoints:
+                sys.exit(
+                    "You specify the appended key %s, but I cannot find it in the endpoints." % params.att_aux_key_input)
+            tf.logging.info("Append %s to the linguistic features" % params.att_aux_key_input)
+            key_features = tf.concat([key_features, endpoints[params.att_aux_key_input]], axis=-1,
+                                     name="key_features")
+
+        if len(params.att_key_num_nodes) != 0:
+            # According to "A STRUCTURED SELF-ATTENTIVE SENTENCE EMBEDDING",
+            # the last layer of the key network is `affine + tanh`.
+            if len(params.att_key_num_nodes) > 1:
+                for index, node in enumerate(params.att_key_num_nodes[:-1]):
+                    key_features = dense_relu(key_features, node, endpoints, params, is_training, name=("att_key%d" % index))
+            key_features = dense_tanh(key_features, params.att_key_num_nodes[-1], endpoints, params, is_training,
+                                      name=("att_key%d" % (len(params.att_key_num_nodes) - 1)))
 
         if len(params.att_value_num_nodes) != 0:
             tf.logging.info("Note: Add network to process the value input %s" % value_features.name)
             for index, node in enumerate(params.att_value_num_nodes):
-                value_features = dense_layer(value_features, node, endpoints, params, is_training, name=("att_value%d" % index))
+                value_features = dense_relu(value_features, node, endpoints, params, is_training, name=("att_value%d" % index))
 
         # The last element in self_att_key_num_nodes and self_att_value_num_nodes
         # is the dimension of the key and the value. In multi-head attention, they are extended n times.
@@ -208,10 +247,11 @@ def linguistic_attention(features, aux_features, endpoints, params, is_training=
         penalty = tf.reduce_sum(tf.square(penalty))
         tf.add_to_collection("PENALTY", params.att_penalty_term * penalty)
 
-        # debug
-        endpoints["att_query"] = query
-        endpoints["att_key"] = key_features
-        endpoints["att_value"] = value_features
+        # # Debug
+        # # Comment lines when running the code
+        # endpoints["att_query"] = query
+        # endpoints["att_key"] = key_features
+        # endpoints["att_value"] = value_features
     return att
 
 
@@ -313,89 +353,89 @@ if __name__ == "__main__":
     #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
     #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
 
-    # Self-attention
-    params = ParamsPlain()
-    params.dict["self_att_key_input"] = "key"
-    params.dict["self_att_key_num_nodes"] = []
-    params.dict["self_att_value_num_nodes"] = []
-    params.dict["self_att_num_heads"] = 10
-    params.dict["self_att_penalty_term"] = 1
-    params.dict["weight_l2_regularizer"] = 1e-2
-    params.dict["batchnorm_momentum"] = 0.99
-
-    endpoints["key"] = features
-    self_att = self_attention(features, aux_features, endpoints, params, is_training=True)
-    penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
-    grads = tf.gradients(self_att, features)
-    grads_penalty = tf.gradients(penalty_loss, features)
-
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        import numpy as np
-        features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
-        features_val[0, :, :] = 1e-8 * features_val[0, :, :]
-        features_val[1, :, :] = 0
-        features_val[2, :, :] = 100 * features_val[2, :, :]
-        features_val[3, :, :] = 100
-        self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
-        query = endpoints_val["att_query"]
-        value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.self_att_num_heads,
-                                          features_val.shape[2] / params.self_att_num_heads])
-        value = np.transpose(value, [0,2,1,3])
-        key = features_val
-
-        from model.test_utils import compute_self_attention
-        self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
-
-        assert np.allclose(np.sum(self_att_val), np.sum(self_att_np))
-        assert np.allclose(penalty_loss_val, penalty_loss_np)
-
-        assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
-        assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
-
-    # # Linguistic attention
+    # # Self-attention
     # params = ParamsPlain()
-    # params.dict["att_aux_key_input"] = "key"
-    # params.dict["att_key_num_nodes"] = []
-    # params.dict["att_value_num_nodes"] = []
-    # params.dict["att_num_heads"] = 1
-    # params.dict["att_penalty_term"] = 1
+    # params.dict["self_att_key_input"] = "key"
+    # params.dict["self_att_key_num_nodes"] = []
+    # params.dict["self_att_value_num_nodes"] = []
+    # params.dict["self_att_num_heads"] = 10
+    # params.dict["self_att_penalty_term"] = 1
     # params.dict["weight_l2_regularizer"] = 1e-2
     # params.dict["batchnorm_momentum"] = 0.99
     #
-    # endpoints["key"] = aux_features
-    # att = linguistic_attention(features, linguistic_features_all, endpoints, params, is_training=True)
+    # endpoints["key"] = features
+    # self_att = self_attention(features, aux_features, endpoints, params, is_training=True)
     # penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
-    # grads = tf.gradients(att, features)
-    # grads_penalty = tf.gradients(penalty_loss, linguistic_features_all["linguistic"])
+    # grads = tf.gradients(self_att, features)
+    # grads_penalty = tf.gradients(penalty_loss, features)
     #
     # with tf.Session() as sess:
     #     sess.run(tf.global_variables_initializer())
     #     import numpy as np
-    #
     #     features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
     #     features_val[0, :, :] = 1e-8 * features_val[0, :, :]
     #     features_val[1, :, :] = 0
     #     features_val[2, :, :] = 100 * features_val[2, :, :]
     #     features_val[3, :, :] = 100
-    #
-    #     aux_features_val = np.random.rand(num_data, num_length, 100).astype(np.float32)
-    #     linguistic_features_val = np.random.rand(num_data, num_length, 500).astype(np.float32)
-    #
-    #     att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run(
-    #         [att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val,
-    #                                                                          aux_features: aux_features_val,
-    #                                                                          linguistic_features: linguistic_features_val})
+    #     self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
     #     query = endpoints_val["att_query"]
-    #     value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.att_num_heads, features_val.shape[2]/params.att_num_heads])
+    #     value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.self_att_num_heads,
+    #                                       features_val.shape[2] / params.self_att_num_heads])
     #     value = np.transpose(value, [0,2,1,3])
-    #     key = np.concatenate([linguistic_features_val, aux_features_val], axis=-1)
+    #     key = features_val
     #
-    #     from model.test_utils import compute_attention
-    #     att_np, penalty_loss_np = compute_attention(value, key, query, params)
+    #     from model.test_utils import compute_self_attention
+    #     self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
     #
-    #     assert np.allclose(np.sum(att_val), np.sum(att_np))
+    #     assert np.allclose(np.sum(self_att_val), np.sum(self_att_np))
     #     assert np.allclose(penalty_loss_val, penalty_loss_np)
     #
     #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
     #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
+
+    # Linguistic attention
+    params = ParamsPlain()
+    params.dict["att_aux_key_input"] = "key"
+    params.dict["att_key_num_nodes"] = []
+    params.dict["att_value_num_nodes"] = []
+    params.dict["att_num_heads"] = 1
+    params.dict["att_penalty_term"] = 1
+    params.dict["weight_l2_regularizer"] = 1e-2
+    params.dict["batchnorm_momentum"] = 0.99
+
+    endpoints["key"] = aux_features
+    att = linguistic_attention(features, linguistic_features_all, endpoints, params, is_training=True)
+    penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
+    grads = tf.gradients(att, features)
+    grads_penalty = tf.gradients(penalty_loss, linguistic_features_all["linguistic"])
+
+    with tf.Session() as sess:
+        sess.run(tf.global_variables_initializer())
+        import numpy as np
+
+        features_val = np.random.rand(num_data, num_length-4, num_dim).astype(np.float32)
+        features_val[0, :, :] = 1e-8 * features_val[0, :, :]
+        features_val[1, :, :] = 0
+        features_val[2, :, :] = 100 * features_val[2, :, :]
+        features_val[3, :, :] = 100
+
+        aux_features_val = np.random.rand(num_data, num_length-4, 100).astype(np.float32)
+        linguistic_features_val = np.random.rand(num_data, num_length, 500).astype(np.float32)
+
+        att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run(
+            [att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val,
+                                                                             aux_features: aux_features_val,
+                                                                             linguistic_features: linguistic_features_val})
+        query = endpoints_val["att_query"]
+        value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.att_num_heads, features_val.shape[2]/params.att_num_heads])
+        value = np.transpose(value, [0,2,1,3])
+        key = np.concatenate([linguistic_features_val[:,2:-2,:], aux_features_val], axis=-1)
+
+        from model.test_utils import compute_attention
+        att_np, penalty_loss_np = compute_attention(value, key, query, params)
+
+        assert np.allclose(np.sum(att_val), np.sum(att_np))
+        assert np.allclose(penalty_loss_val, penalty_loss_np)
+
+        assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+        assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"

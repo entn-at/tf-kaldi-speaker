@@ -9,6 +9,7 @@ Compared with Kaldi nnet3, the modification of the network (e.g. adding attentio
 Adding other features to support text-dependent speaker verification is also possible.
 
 The purpose of the project is to make researches on neural network based speaker verification easier.
+I also try to reproduce the results in my papers.
 
 # Requirement
 
@@ -54,7 +55,7 @@ Again, the backend classifier is integrated using Kaldi.
 * Examples including VoxCeleb.
 * Standard x-vector architecture (with minor modification).
 * Angular softmax, additive margin softmax, additive angular margin softmax.
-* TODO: Self attention and other attention methods.
+* Self attention and other attention methods (e.g. linguistic attention in text-dependent case).
 * TODO: Add egs for SRE and Fiser.
 
 

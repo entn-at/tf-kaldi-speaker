@@ -6,14 +6,15 @@ import time
 import numpy as np
 from model.common import l2_scaling
 from model.tdnn import tdnn
-from model.test_network import test_network
-from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
+from model.loss import softmax
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
+from model.loss import semihard_triplet_loss, angular_triplet_loss
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
-from misc.utils import substring_in_list
+from misc.utils import substring_in_list, activation_summaries
+from six.moves import range
 
 
-class Trainer():
+class Trainer(object):
     """Handle the training, validation and prediction
 
     Trainer is a simple class that deals with examples having feature-label structure.
@@ -34,8 +35,6 @@ class Trainer():
         self.network_type = params.network_type
         if params.network_type == "tdnn":
             self.network = tdnn
-        elif params.network_type == "test_network":
-            self.network = test_network
         else:
             raise NotImplementedError("Not implement %s network" % params.network_type)
         self.loss_type = None
@@ -237,12 +236,10 @@ class Trainer():
             self.loss_network = additive_margin_softmax
         elif loss_type == "additive_angular_margin_softmax":
             self.loss_network = additive_angular_margin_softmax
-        elif loss_type == "ge2e":
-            self.loss_network = ge2e_loss
-        elif loss_type == "triplet_loss":
-            self.loss_network = triplet_loss
-        elif loss_type == "test_loss":
-            self.loss_network = test_loss
+        elif loss_type == "semihard_triplet_loss":
+            self.loss_network = semihard_triplet_loss
+        elif loss_type == "angular_triplet_loss":
+            self.loss_network = angular_triplet_loss
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
@@ -333,24 +330,23 @@ class Trainer():
             features, endpoints = self.entire_network(self.train_features, self.params, is_training, reuse_variables)
             loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
             regularization_loss = tf.losses.get_regularization_loss()
-
-            # We may have other losses (i.e. penalty term in attention layer)
-            penalty_loss = tf.get_collection("PENALTY")
-            if len(penalty_loss) != 0:
-                penalty_loss = tf.reduce_sum(penalty_loss)
-                self.train_summary.append(tf.summary.scalar("penalty_term", penalty_loss))
-            else:
-                penalty_loss = 0
-
-            total_loss = loss + regularization_loss + penalty_loss
-            self.total_loss = total_loss
+            total_loss = loss + regularization_loss
 
             # train_summary contains all the summeries we want to inspect.
             # Get the summaries define in the network and loss function.
             # The summeries in the network and loss function are about the network variables.
             self.train_summary = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
-
             self.train_summary.append(tf.summary.scalar("loss", loss))
+            self.train_summary.append(tf.summary.scalar("regularization_loss", regularization_loss))
+
+            # We may have other losses (i.e. penalty term in attention layer)
+            penalty_loss = tf.get_collection("PENALTY")
+            if len(penalty_loss) != 0:
+                penalty_loss = tf.reduce_sum(penalty_loss)
+                total_loss += penalty_loss
+                self.train_summary.append(tf.summary.scalar("penalty_term", penalty_loss))
+
+            self.total_loss = total_loss
             self.train_summary.append(tf.summary.scalar("total_loss", total_loss))
             self.train_summary.append(tf.summary.scalar("learning_rate", self.learning_rate))
 
@@ -375,12 +371,13 @@ class Trainer():
                     assert("w" in var.name or "b" in var.name)
             grads = zip(grads_clip, vars)
 
-        # The values and gradients are added to summeries
-        for grad, var in grads:
-            if grad is not None:
-                self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
-                self.train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
+        # # The values and gradients are added to summeries
+        # for grad, var in grads:
+        #     if grad is not None:
+        #         self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+        #         self.train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
 
+        self.train_summary.append(activation_summaries(endpoints))
         for var in tf.trainable_variables():
             self.train_summary.append(tf.summary.histogram(var.op.name, var))
         self.train_summary = tf.summary.merge(self.train_summary)
@@ -401,7 +398,7 @@ class Trainer():
             self.summary_writer = tf.summary.FileWriter(self.model, self.sess.graph)
         return
 
-    def train(self, data, spklist, learning_rate):
+    def train(self, data, spklist, learning_rate, aux_data=None):
         """Train the model.
 
         Args:
@@ -409,6 +406,7 @@ class Trainer():
             spklist: The spklist is a file map speaker name to the index.
             learning_rate: The learning rate is passed by the main program. The main program can easily tune the
                            learning rate according to the validation accuracy or anything else.
+            aux_data: The auxiliary data (maybe useful in child class.)
         """
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
@@ -471,7 +469,7 @@ class Trainer():
 
         return
 
-    def train_tune_lr(self, data, spklist):
+    def train_tune_lr(self, data, spklist, aux_data=None):
         """Tune the learning rate.
 
         I think it is better to use sgd to test the learning rate.
@@ -481,6 +479,7 @@ class Trainer():
         Args:
             data: The training data directory.
             spklist: The spklist is a file map speaker name to the index.
+            aux_data: The auxiliary data directory.
         """
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
@@ -495,26 +494,22 @@ class Trainer():
                                            shuffle=True)
         data_loader.start()
 
-        # The learning rate normally varies from 1e-4 to 1
+        # The learning rate normally varies from 1e-5 to 1
         # Some common values:
         # 1. factor = 1.15
-        #    tune_period = 100
+        #    tune_period = 300
         #    tune_times = 100
-        #
-        # 2. factor = 1.25
-        #    tune_period = 100
-        #    tune_times = 50
-        init_learning_rate = 1e-4
+        init_learning_rate = 1e-5
         factor = 1.15
-        tune_period = 100
+        tune_period = 300
         tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
-        for step in xrange(tune_period * tune_times):
-            lr = init_learning_rate * (factor ** (step / tune_period))
+        for step in range(tune_period * tune_times):
+            lr = init_learning_rate * (factor ** (step // tune_period))
             try:
-                if step % tune_period == 0:
-                    train_ops = [self.train_ops, self.train_op]
+                if step % 100 == 0:
+                    train_ops = [self.train_ops, self.train_op, self.train_summary]
                     start_time = time.time()
                     features, labels = data_loader.fetch()
                     train_val = self.sess.run(train_ops, feed_dict={self.train_features: features,
@@ -523,10 +518,11 @@ class Trainer():
                                                                     self.learning_rate: lr})
                     end_time = time.time()
                     tf.logging.info(
-                        "Epoch: step: %2d time: %.4f s/step, raw loss: %f, total loss: %f" \
-                        % (step, end_time - start_time,
+                        "Epoch: step: %2d, time: %.4f s/step, lr: %f, raw loss: %f, total loss: %f" \
+                        % (step, end_time - start_time, lr,
                            train_val[0]["raw_loss"], train_val[0]["loss"]))
                     fp_lr.write("%d %f %f\n" % (step, lr, train_val[0]["loss"]))
+                    self.summary_writer.add_summary(train_val[-1], step)
                 else:
                     features, labels = data_loader.fetch()
                     _ = self.sess.run(self.train_op, feed_dict={self.train_features: features,
@@ -577,7 +573,7 @@ class Trainer():
         self.save(1)
         return
 
-    def valid(self, data, spklist, batch_type="softmax", output_embeddings=False):
+    def valid(self, data, spklist, batch_type="softmax", output_embeddings=False, aux_data=None):
         """Evaluate on the validation set
 
         Args:
@@ -589,6 +585,7 @@ class Trainer():
             output_embeddings: Set True to output the corresponding embeddings and labels of the valid set.
                                If output_embeddings, an additional valid metric (e.g. EER) should be computed outside
                                the function.
+            aux_data: The auxiliary data directory.
 
         :return: valid_loss, embeddings and labels (None if output_embeddings is False).
         """
@@ -666,7 +663,7 @@ class Trainer():
             raise ValueError
 
         data_loader.start()
-        for _ in xrange(self.params.valid_max_iterations):
+        for _ in range(self.params.valid_max_iterations):
             try:
                 if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
@@ -739,11 +736,11 @@ class Trainer():
             grads_clip, _ = tf.clip_by_global_norm(grads, self.params.clip_gradient_norm)  # l2 norm clipping
             grads = zip(grads_clip, vars)
 
-        # The values and gradients are added to summeries
-        for grad, var in grads:
-            if grad is not None:
-                add_train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
-                add_train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
+        # # The values and gradients are added to summeries
+        # for grad, var in grads:
+        #     if grad is not None:
+        #         add_train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+        #         add_train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
 
         if variable_list is None:
             trainable_variables = tf.trainable_variables()

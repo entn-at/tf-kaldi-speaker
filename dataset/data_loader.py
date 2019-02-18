@@ -5,6 +5,7 @@ import numpy as np
 import time
 from multiprocessing import Process, Queue, Event
 from dataset.kaldi_io import FeatureReader
+from six.moves import range
 
 
 class DataOutOfRange(Exception):
@@ -70,8 +71,6 @@ def get_aux_speaker_info(data, aux_data, spklist):
         spk2index: A dict from speaker NAME to speaker ID. This is useful to get the number of speakers. Because
                    sometimes, the speakers are not all included in the data directory (like in the valid set).
     """
-    import pdb
-    pdb.set_trace()
     assert (os.path.isdir(data) and os.path.isfile(spklist))
     spk2index = {}
     with open(spklist, "r") as f:
@@ -110,7 +109,7 @@ def get_aux_speaker_info(data, aux_data, spklist):
     return spk2features, features2spk, spk2index
 
 
-class KaldiDataRandomReader():
+class KaldiDataRandomReader(object):
     """Used to read data from a kaldi data directory."""
 
     def __init__(self, data_dir, spklist, num_parallel=1, num_speakers=None, num_segments=None, min_len=None, max_len=None, shuffle=True):
@@ -194,7 +193,7 @@ class KaldiDataRandomReader():
                 # Now the length of the list must be greater than the sample size.
                 speaker_features = random.sample(feature_list, self.num_segments)
                 for j, feat in enumerate(speaker_features):
-                    features[i * self.num_segments + j, :, :] = feature_reader.read(feat, batch_length, shuffle=self.shuffle)
+                    features[i * self.num_segments + j, :, :], _ = feature_reader.read(feat, batch_length, shuffle=self.shuffle)
             yield (features, labels)
 
     def load_dataset(self):
@@ -280,7 +279,7 @@ def batch_random(stop_event,
             # Now the length of the list must be greater than the sample size.
             speaker_features = rd.sample(feature_list, num_segments)
             for j, feat in enumerate(speaker_features):
-                features[i * num_segments + j, :, :] = feature_reader.read(feat, batch_length, shuffle=shuffle)
+                features[i * num_segments + j, :, :], _ = feature_reader.read(feat, batch_length, shuffle=shuffle)
         queue.put((features, labels))
 
     time.sleep(3)
@@ -293,7 +292,7 @@ def batch_random(stop_event,
     return
 
 
-class KaldiDataRandomQueue():
+class KaldiDataRandomQueue(object):
     """A queue to read features from Kaldi data directory."""
 
     def __init__(self, data_dir, spklist, num_parallel=1, max_qsize=10, num_speakers=None, num_segments=None, min_len=None, max_len=None, shuffle=True):
@@ -374,7 +373,7 @@ class KaldiDataRandomQueue():
                                                              self.max_len,
                                                              self.shuffle,
                                                              i))
-                          for i in xrange(self.num_parallel_datasets)]
+                          for i in range(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
             process.start()
@@ -430,12 +429,12 @@ def batch_sequence(stop_event,
 
     feature_reader = FeatureReader(data)
     num_batches = len(feature_list) / batch_size
-    for i in xrange(num_batches):
+    for i in range(num_batches):
         batch_length = rd.randint(min_len, max_len)
         features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
         labels = np.zeros((batch_size), dtype=np.int32)
-        for j in xrange(batch_size):
-            features[j, :, :] = feature_reader.read(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
+        for j in range(batch_size):
+            features[j, :, :], _ = feature_reader.read(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
             labels[j] = features2spk[feature_list[i * batch_size + j]]
         queue.put((features, labels))
     stop_event.set()
@@ -443,7 +442,7 @@ def batch_sequence(stop_event,
     return
 
 
-class KaldiDataSeqQueue():
+class KaldiDataSeqQueue(object):
     """A queue to read features from Kaldi data directory."""
 
     def __init__(self, data_dir, spklist, num_parallel=1, max_qsize=10, batch_size=128, min_len=None, max_len=None, shuffle=True):
@@ -493,7 +492,7 @@ class KaldiDataSeqQueue():
         self.queue = Queue(max_qsize)
 
         # The events will be set once the processes finish its job
-        self.stop_event = [Event() for _ in xrange(num_parallel)]
+        self.stop_event = [Event() for _ in range(num_parallel)]
 
         # And the prcesses are saved
         self.processes = []
@@ -526,7 +525,7 @@ class KaldiDataSeqQueue():
                                                                self.max_len,
                                                                self.shuffle,
                                                                i))
-                          for i in xrange(self.num_parallel_datasets)]
+                          for i in range(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
             process.start()
@@ -534,7 +533,7 @@ class KaldiDataSeqQueue():
     def fetch(self):
         """Fetch data from the queue"""
         if self.queue.empty():
-            all_finish = [self.stop_event[i].is_set() for i in xrange(self.num_parallel_datasets)]
+            all_finish = [self.stop_event[i].is_set() for i in range(self.num_parallel_datasets)]
             if all(all_finish):
                 # If the queue is empty and all processes are finished, we got nothing to read.
                 for process in self.processes:
@@ -614,9 +613,17 @@ def multi_batch_random(stop_event,
                 feature_list *= (int(num_segments / len(feature_list)) + 1)
             # Now the length of the list must be greater than the sample size.
             speaker_features = rd.sample(feature_list, num_segments)
-            for name in feature_reader:
-                for j, feat in enumerate(speaker_features):
-                    features[name][i * num_segments + j, :, :] = feature_reader[name].read(feat[name], batch_length, shuffle=shuffle)
+
+            for j, feat in enumerate(speaker_features):
+                # Load features first.
+                features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read(feat["features"],
+                                                                                                              batch_length,
+                                                                                                              shuffle=shuffle)
+                # Other features should follow the same start points
+                for name in feature_reader:
+                    if name == "features":
+                        continue
+                    features[name][i * num_segments + j, :, :], _ = feature_reader[name].read(feat[name], batch_length, start=start_pos)
         queue.put((features, labels))
 
     time.sleep(3)
@@ -639,8 +646,10 @@ class KaldiMultiDataRandomQueue(KaldiDataRandomQueue):
                                                         num_segments, min_len, max_len, shuffle)
         self.aux_data = {}
         for dirname in os.listdir(aux_data):
+            if dirname[0] == ".":
+                continue
             if os.path.isdir(os.path.join(aux_data, dirname)):
-                self.aux_data[dirname] = os.path.isdir(os.path.join(aux_data, dirname))
+                self.aux_data[dirname] = os.path.join(aux_data, dirname)
 
         # Preload the information. We should build the map from the utterance to the auxiliary feature.
         self.spk2features, self.features2spk, spk2index = get_aux_speaker_info(data_dir, self.aux_data, spklist)
@@ -660,7 +669,7 @@ class KaldiMultiDataRandomQueue(KaldiDataRandomQueue):
                                                                    self.max_len,
                                                                    self.shuffle,
                                                                    i))
-                          for i in xrange(self.num_parallel_datasets)]
+                          for i in range(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
             process.start()
@@ -702,16 +711,22 @@ def multi_batch_sequence(stop_event,
         feature_reader[name] = FeatureReader(aux_data[name])
 
     num_batches = len(feature_list) / batch_size
-    for i in xrange(num_batches):
+    for i in range(num_batches):
         batch_length = rd.randint(min_len, max_len)
         features = {}
         for name in feature_reader:
             features[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
         labels = np.zeros((batch_size), dtype=np.int32)
-        for j in xrange(batch_size):
+        for j in range(batch_size):
+            # Load the features first
+            features["features"][j, :, :], start_pos = feature_reader["features"].read(feature_list[i * batch_size + j]["features"],
+                                                                                       batch_length,
+                                                                                       shuffle=shuffle)
             for name in feature_reader:
-                features[name][j, :, :] = feature_reader[name].read(feature_list[name][i * batch_size + j], batch_length, shuffle=shuffle)
-            labels[j] = features2spk[feature_list["features"][i * batch_size + j]]
+                if name == "features":
+                    continue
+                features[name][j, :, :], _ = feature_reader[name].read(feature_list[i * batch_size + j][name], batch_length, start=start_pos)
+            labels[j] = features2spk[feature_list[i * batch_size + j]["features"]]
         queue.put((features, labels))
     stop_event.set()
     print("The process {} is about to exit.".format(os.getpid()))
@@ -727,12 +742,13 @@ class KaldiMultiDataSeqQueue(KaldiDataSeqQueue):
         """
         super(KaldiMultiDataSeqQueue, self).__init__(data_dir, spklist, num_parallel, max_qsize, batch_size,
                                                      min_len, max_len, shuffle)
-        import pdb
-        pdb.set_trace()
         self.aux_data = {}
         for dirname in os.listdir(aux_data):
+            # Skip hidden directories (e.g. .backup/)
+            if dirname[0] == ".":
+                continue
             if os.path.isdir(os.path.join(aux_data, dirname)):
-                self.aux_data[dirname] = os.path.isdir(os.path.join(aux_data, dirname))
+                self.aux_data[dirname] = os.path.join(aux_data, dirname)
 
         # Preload the information. We should build the map from the utterance to the auxiliary feature.
         self.spk2features, self.features2spk, spk2index = get_aux_speaker_info(data_dir, self.aux_data, spklist)
@@ -765,15 +781,16 @@ class KaldiMultiDataSeqQueue(KaldiDataSeqQueue):
                                                                      self.max_len,
                                                                      self.shuffle,
                                                                      i))
-                          for i in xrange(self.num_parallel_datasets)]
+                          for i in range(self.num_parallel_datasets)]
         for process in self.processes:
             process.daemon = True
             process.start()
 
 
 if __name__ == "__main__":
-    data = "/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/end2end_valid"
-    spklist = "/home/dawna/mgb3/transcription/exp-yl695/Snst/xvector/cpdaic_1.0_50/data/voxceleb_train_combined_no_sil/end2end_valid/spklist"
+    data = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/end2end_valid"
+    aux_data_dir = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/test_aux_data"
+    spklist = "/home/heliang05/liuyi/voxceleb/data/voxceleb_train_combined_no_sil/end2end_valid/spklist"
     num_loads = 10
     import time
 
@@ -785,44 +802,159 @@ if __name__ == "__main__":
     #     features, labels = data_loader.load_dataset()
     #     print("start...")
     #     start_time = time.time()
-    #     for _ in xrange(num_loads):
+    #     for _ in range(num_loads):
     #         features_val, labels_val = sess.run([features, labels])
     #     end_time = time.time()
     #     print("Time: %.4f s" % (end_time - start_time))
 
-    # Using KaldiDataQueue (multiprocessing)
-    # Although this will introduce CPU-GPU transfer overhead, it seems to be much faster.
-    data_loader = KaldiDataRandomQueue(data, spklist, num_parallel=8, max_qsize=10, num_speakers=64, num_segments=10, min_len=200, max_len=400, shuffle=True)
-    with tf.Session() as sess:
-        ts = time.time()
-        features = tf.placeholder(tf.float32, shape=[None, None, None])
-        labels = tf.placeholder(tf.int32, shape=[None])
-        features += 1
-        data_loader.start()
-        for _ in range(num_loads):
-            features_val, labels_val = data_loader.fetch()
-            features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
-                                                                                 labels: labels_val})
-        te = time.time() - ts
-        data_loader.stop()
-        print("Time: %.4f s" % te)
+    # # Using KaldiDataQueue (multiprocessing)
+    # # Although this will introduce CPU-GPU transfer overhead, it seems to be much faster.
+    # data_loader = KaldiDataRandomQueue(data, spklist, num_parallel=8, max_qsize=10, num_speakers=64, num_segments=10, min_len=200, max_len=400, shuffle=True)
+    # with tf.Session() as sess:
+    #     ts = time.time()
+    #     features = tf.placeholder(tf.float32, shape=[None, None, None])
+    #     labels = tf.placeholder(tf.int32, shape=[None])
+    #     features += 1
+    #     data_loader.start()
+    #     for _ in range(num_loads):
+    #         features_val, labels_val = data_loader.fetch()
+    #         features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
+    #                                                                              labels: labels_val})
+    #     te = time.time() - ts
+    #     data_loader.stop()
+    #     print("Time: %.4f s" % te)
+    #
+    # # Using KaldiDataSeqQueue
+    # data_loader = KaldiDataSeqQueue(data, spklist, num_parallel=8, max_qsize=10, batch_size=128, min_len=200, max_len=400, shuffle=True)
+    # with tf.Session() as sess:
+    #     features = tf.placeholder(tf.float32, shape=[None, None, None])
+    #     labels = tf.placeholder(tf.int32, shape=[None])
+    #     features += 1
+    #     data_loader.start()
+    #     index = 1
+    #     while True:
+    #         try:
+    #             features_val, labels_val = data_loader.fetch()
+    #             features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
+    #                                                                                  labels: labels_val})
+    #             print(index*128)
+    #             index += 1
+    #         except DataOutOfRange:
+    #             break
+    #     data_loader.stop()
 
-    # Using KaldiDataSeqQueue
-    data_loader = KaldiDataSeqQueue(data, spklist, num_parallel=8, max_qsize=10, batch_size=128, min_len=200, max_len=400, shuffle=True)
-    with tf.Session() as sess:
-        features = tf.placeholder(tf.float32, shape=[None, None, None])
-        labels = tf.placeholder(tf.int32, shape=[None])
-        features += 1
-        data_loader.start()
-        index = 1
-        while True:
-            try:
-                features_val, labels_val = data_loader.fetch()
-                features_test, labels_test = sess.run([features, labels], feed_dict={features: features_val,
-                                                                                     labels: labels_val})
-                print(index*128)
-                index += 1
-            except DataOutOfRange:
-                break
-        data_loader.stop()
+    # # Test basic functions in KaldiMultiDataRandomQueue and KaldiMultiDataSeqQueue
+    # num_speakers = 64
+    # num_segments = 1
+    # min_len = 100
+    # max_len = 200
+    # batch_size = 64
+    # shuffle = True
+    #
+    # aux_data = {}
+    # for dirname in os.listdir(aux_data_dir):
+    #     if os.path.isdir(os.path.join(aux_data_dir, dirname)):
+    #         aux_data[dirname] = os.path.join(aux_data_dir, dirname)
+    # spk2features, features2spk, spk2index = get_aux_speaker_info(data, aux_data, spklist)
+    #
+    # feature_reader = {}
+    # feature_reader["features"] = FeatureReader(data)
+    # for name in aux_data:
+    #     feature_reader[name] = FeatureReader(aux_data[name])
+    # speakers = list(spk2features.keys())
+    # num_total_speakers = len(list(spk2index.keys()))
+    # if num_total_speakers < num_speakers:
+    #     print(
+    #         "[Warning] The number of available speakers are less than the required speaker. Some speakers will be duplicated.")
+    #     speakers = speakers * (int(num_speakers / num_total_speakers) + 1)
+    # rd = random.Random(os.urandom(4))
+    # batch_speakers = rd.sample(speakers, num_speakers)
+    # batch_length = rd.randint(min_len, max_len)
+    # features = {}
+    # for name in feature_reader:
+    #     features[name] = np.zeros((num_speakers * num_segments, batch_length, feature_reader[name].dim),
+    #                               dtype=np.float32)
+    # labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
+    # for i, speaker in enumerate(batch_speakers):
+    #     labels[i * num_segments:(i + 1) * num_segments] = speaker
+    #     feature_list = spk2features[speaker]
+    #     if len(feature_list) < num_segments:
+    #         feature_list *= (int(num_segments / len(feature_list)) + 1)
+    #     # Now the length of the list must be greater than the sample size.
+    #     speaker_features = rd.sample(feature_list, num_segments)
+    #
+    #     for j, feat in enumerate(speaker_features):
+    #         features["features"][i * num_segments + j, :, :], start_pos = feature_reader["features"].read(
+    #             feat["features"],
+    #             batch_length,
+    #             shuffle=shuffle)
+    #         for name in feature_reader:
+    #             if name == "features":
+    #                 continue
+    #             features[name][i * num_segments + j, :, :], _ = feature_reader[name].read(feat[name], batch_length,
+    #                                                                                       start=start_pos)
+    # # Test the consistency of the featuers (the starting points)
+    # for name in feature_reader:
+    #     assert np.allclose(features[name], features["features"])
+    #
+    # rd = random.Random(os.urandom(4))
+    # aux_data = {}
+    # for dirname in os.listdir(aux_data_dir):
+    #     if os.path.isdir(os.path.join(aux_data_dir, dirname)):
+    #         aux_data[dirname] = os.path.join(aux_data_dir, dirname)
+    # spk2features, features2spk, spk2index = get_aux_speaker_info(data, aux_data, spklist)
+    # feature_list = []
+    # sub_feature_list = []
+    # for spk in spk2features:
+    #     feature_list += spk2features[spk]
+    # num_parallel = 1
+    # random.shuffle(feature_list)
+    # num_sub_features = len(feature_list) / num_parallel
+    # for i in range(num_parallel):
+    #     if i == num_parallel - 1:
+    #         sub_feature_list.append(feature_list[i * num_sub_features:])
+    #     else:
+    #         sub_feature_list.append(feature_list[i * num_sub_features:(i + 1) * num_sub_features])
+    # feature_list = sub_feature_list[0]
+    # feature_reader = {}
+    # feature_reader["features"] = FeatureReader(data)
+    # for name in aux_data:
+    #     feature_reader[name] = FeatureReader(aux_data[name])
+    #
+    # num_batches = len(feature_list) / batch_size
+    # for i in range(num_batches/100):
+    #     batch_length = rd.randint(min_len, max_len)
+    #     features = {}
+    #     for name in feature_reader:
+    #         features[name] = np.zeros((batch_size, batch_length, feature_reader[name].dim), dtype=np.float32)
+    #     labels = np.zeros((batch_size), dtype=np.int32)
+    #
+    #     for j in range(batch_size):
+    #         features["features"][j, :, :], start_pos = feature_reader["features"].read(feature_list[i * batch_size + j]["features"],
+    #                                                                                    batch_length,
+    #                                                                                    shuffle=shuffle)
+    #         for name in feature_reader:
+    #             if name == "features":
+    #                 continue
+    #             features[name][j, :, :], _ = feature_reader[name].read(feature_list[i * batch_size + j][name], batch_length, start=start_pos)
+    #         labels[j] = features2spk[feature_list[i * batch_size + j]["features"]]
+    #     for name in feature_reader:
+    #         assert np.allclose(features[name], features["features"])
 
+    import pdb
+    data_loader = KaldiMultiDataRandomQueue(data, aux_data_dir, spklist, num_parallel=10)
+    data_loader.set_batch(64, 1)
+    data_loader.set_length(200, 400)
+    data_loader.start()
+    for _ in range(num_loads):
+        features_val, labels_val = data_loader.fetch()
+    data_loader.stop()
+
+    data_loader = KaldiMultiDataSeqQueue(data, aux_data_dir, spklist)
+    data_loader.set_batch(64)
+    data_loader.set_length(200, 400)
+    data_loader.start()
+    for _ in range(num_loads):
+        pdb.set_trace()
+        features_val, labels_val = data_loader.fetch()
+    data_loader.stop()

@@ -97,3 +97,5 @@ if [ $stage -le 3 ]; then
       ivector-normalize-length --scaleup=false scp:$dir/xvector_before_norm.scp ark,scp:$dir/xvector.ark,$dir/xvector.scp
   fi
 fi
+
+exit 0

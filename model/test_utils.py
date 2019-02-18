@@ -1,4 +1,5 @@
 import numpy as np
+from six.moves import range
 
 
 def compute_cos(x1, x2):
@@ -399,3 +400,217 @@ def compute_attention(value, key, query, params):
     att_stddev = np.reshape(att_stddev, [batch, n_heads * dim])
     att = np.concatenate([att_mean, att_stddev], axis=1)
     return att, penalty
+
+
+def pairwise_cos_similarity_np(features):
+    """Compute the pairwise cosine similarity.
+
+    Args:
+        features: The input embeddings.
+    :return: The pairwise cosine similarity matrix.
+    """
+    feature_norm = np.sqrt(np.sum(features ** 2, axis=1, keepdims=True))
+    features = features / feature_norm
+    return np.clip(np.dot(features, np.transpose(features)), -1.0, 1.0)
+
+
+def angular_triplet_proc_positive(sim, margin, loss_type):
+    if loss_type =="asoftmax":
+        if int(margin) == 1:
+            sim = sim
+        elif int(margin) == 2:
+            if sim > 0:
+                k = 0
+            else:
+                k = 1
+            sim = ((-1) ** k) * (np.cos(2 * np.arccos(sim))) - 2 * k
+        elif int(margin) == 4:
+            l = np.cos(2 * np.arccos(sim))
+            if sim > 0 and l > 0:
+                k = 0
+            elif sim > 0 and l < 0:
+                k = 1
+            elif sim < 0 and l < 0:
+                k = 2
+            else:
+                k = 3
+            sim = ((-1) ** k) * (np.cos(4 * np.arccos(sim))) - 2 * k
+        else:
+            raise ValueError("Margin in invalid for asoftmax")
+    elif loss_type == "amsoftmax":
+        sim -= margin
+    else:
+        if sim <= np.cos(np.pi - margin):
+            sim = -np.cos(np.arccos(sim) + margin) - 2
+        else:
+            sim = np.cos(np.arccos(sim) + margin)
+    return sim
+
+
+def angular_triplet_proc_negative(sim, loss_type):
+    return sim
+
+
+def asoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
+    """Compute the triplet loss (using asoftmax loss).
+
+    Args:
+        features: The input embeddings.
+        labels: The input labels.
+        margin: The margin (1, 2, 4).
+        triplet_type: all or hard
+    :return: The triplet loss
+    """
+    sim = pairwise_cos_similarity_np(features)
+    loss = 0.0
+    num_triplets = 0
+    num_data = features.shape[0]
+    loss_matrix = np.zeros((num_data, num_data, num_data))
+    total_loss = np.zeros((num_data, 1))
+    eps = 1e-16
+
+    if triplet_type == "all":
+        for i in range(num_data):
+            for j in range(num_data):
+                if i == j or labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "asoftmax")
+                for k in range(num_data):
+                    if labels[i] == labels[k]:
+                        continue
+                    neg = angular_triplet_proc_negative(sim[i, k], "asoftmax")
+                    one_loss = neg - pos
+                    loss += np.maximum(one_loss, 0.0)
+                    loss_matrix[i, j, k] = np.maximum(one_loss, 0.0)
+                    if one_loss > eps:
+                        num_triplets += 1
+    else:
+        for i in range(num_data):
+            min_pos = 1.0
+            for j in range(num_data):
+                if labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "asoftmax")
+                if pos < min_pos:
+                    min_pos = pos
+            max_neg = -1.0
+            for j in range(num_data):
+                if labels[i] == labels[j]:
+                    continue
+                neg = angular_triplet_proc_negative(sim[i, j], "asoftmax")
+                if neg > max_neg:
+                    max_neg = neg
+            loss += np.maximum(max_neg - min_pos, 0.0)
+            total_loss[i] = np.maximum(max_neg - min_pos, 0.0)
+            num_triplets += 1
+    return loss / num_triplets
+
+
+def amsoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
+    """Compute the triplet loss (using amsoftmax loss).
+
+    Args:
+        features: The input embeddings.
+        labels: The input labels.
+        margin: The margin.
+        triplet_type: all or hard
+    :return: The triplet loss
+    """
+    sim = pairwise_cos_similarity_np(features)
+    loss = 0.0
+    num_triplets = 0
+    num_data = features.shape[0]
+    loss_matrix = np.zeros((num_data, num_data, num_data))
+    total_loss = np.zeros((num_data, 1))
+    eps = 1e-16
+
+    if triplet_type == "all":
+        for i in range(num_data):
+            for j in range(num_data):
+                if i == j or labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "amsoftmax")
+                for k in range(num_data):
+                    if labels[i] == labels[k]:
+                        continue
+                    neg = angular_triplet_proc_negative(sim[i, k], "amsoftmax")
+                    one_loss = neg - pos
+                    loss += np.maximum(one_loss, 0.0)
+                    loss_matrix[i, j, k] = np.maximum(one_loss, 0.0)
+                    if one_loss > eps:
+                        num_triplets += 1
+    else:
+        for i in range(num_data):
+            min_pos = 1.0
+            for j in range(num_data):
+                if labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "amsoftmax")
+                if pos < min_pos:
+                    min_pos = pos
+            max_neg = -1.0
+            for j in range(num_data):
+                if labels[i] == labels[j]:
+                    continue
+                neg = angular_triplet_proc_negative(sim[i, j], "amsoftmax")
+                if neg > max_neg:
+                    max_neg = neg
+            loss += np.maximum(max_neg - min_pos, 0.0)
+            total_loss[i] = np.maximum(max_neg - min_pos, 0.0)
+            num_triplets += 1
+    return loss / num_triplets
+
+
+def arcsoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
+    """Compute the triplet loss (using asoftmax loss).
+
+    Args:
+        features: The input embeddings.
+        labels: The input labels.
+        margin: The margin.
+        triplet_type: all or hard
+    :return: The triplet loss
+    """
+    sim = pairwise_cos_similarity_np(features)
+    loss = 0.0
+    num_triplets = 0
+    num_data = features.shape[0]
+    loss_matrix = np.zeros((num_data, num_data, num_data))
+    total_loss = np.zeros((num_data, 1))
+    eps = 1e-16
+
+    if triplet_type == "all":
+        for i in range(num_data):
+            for j in range(num_data):
+                if i == j or labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "arcsoftmax")
+                for k in range(num_data):
+                    if labels[i] == labels[k]:
+                        continue
+                    neg = angular_triplet_proc_negative(sim[i, k], "arcsoftmax")
+                    one_loss = neg - pos
+                    loss += np.maximum(one_loss, 0.0)
+                    loss_matrix[i, j, k] = np.maximum(one_loss, 0.0)
+                    if one_loss > eps:
+                        num_triplets += 1
+    else:
+        for i in range(num_data):
+            min_pos = 1.0
+            for j in range(num_data):
+                if labels[i] != labels[j]:
+                    continue
+                pos = angular_triplet_proc_positive(sim[i, j], margin, "arcsoftmax")
+                if pos < min_pos:
+                    min_pos = pos
+            max_neg = -1.0
+            for j in range(num_data):
+                if labels[i] == labels[j]:
+                    continue
+                neg = angular_triplet_proc_negative(sim[i, j], "arcsoftmax")
+                if neg > max_neg:
+                    max_neg = neg
+            loss += np.maximum(max_neg - min_pos, 0.0)
+            total_loss[i] = np.maximum(max_neg - min_pos, 0.0)
+            num_triplets += 1
+    return loss / num_triplets

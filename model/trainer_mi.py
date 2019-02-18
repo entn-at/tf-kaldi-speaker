@@ -6,12 +6,13 @@ import numpy as np
 from model.trainer import Trainer
 from dataset.data_loader import KaldiMultiDataRandomQueue, KaldiMultiDataSeqQueue, DataOutOfRange
 from model.common import l2_scaling
-from model.loss import softmax, ge2e_loss, triplet_loss, test_loss
+from model.loss import softmax
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
+from model.loss import semihard_triplet_loss, angular_triplet_loss
 from misc.utils import substring_in_list
+from six.moves import range
 
 
-# TODO: have not checked!
 class TrainerMultiInput(Trainer):
     """Trainer for multiple inputs.
 
@@ -75,8 +76,6 @@ class TrainerMultiInput(Trainer):
         is_training = (mode == "train")
         reuse_variables = True if self.is_built else None
 
-        import pdb
-        pdb.set_trace()
         # Create a new path for prediction, since the training may build a tower the support multi-GPUs
         if mode == "predict":
             self.pred_features = tf.placeholder(tf.float32, shape=[None, None, dim], name="pred_features")
@@ -115,12 +114,10 @@ class TrainerMultiInput(Trainer):
             self.loss_network = additive_margin_softmax
         elif loss_type == "additive_angular_margin_softmax":
             self.loss_network = additive_angular_margin_softmax
-        elif loss_type == "ge2e":
-            self.loss_network = ge2e_loss
-        elif loss_type == "triplet_loss":
-            self.loss_network = triplet_loss
-        elif loss_type == "test_loss":
-            self.loss_network = test_loss
+        elif loss_type == "semihard_triplet_loss":
+            self.loss_network = semihard_triplet_loss
+        elif loss_type == "angular_triplet_loss":
+            self.loss_network = angular_triplet_loss
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
@@ -230,24 +227,23 @@ class TrainerMultiInput(Trainer):
             features, endpoints = self.entire_network(train_features, self.params, is_training, reuse_variables)
             loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
             regularization_loss = tf.losses.get_regularization_loss()
-
-            # We may have other losses (i.e. penalty term in attention layer)
-            penalty_loss = tf.get_collection("PENALTY")
-            if len(penalty_loss) != 0:
-                penalty_loss = tf.reduce_sum(penalty_loss)
-                self.train_summary.append(tf.summary.scalar("penalty_term", penalty_loss))
-            else:
-                penalty_loss = 0
-
-            total_loss = loss + regularization_loss + penalty_loss
-            self.total_loss = total_loss
+            total_loss = loss + regularization_loss
 
             # train_summary contains all the summeries we want to inspect.
             # Get the summaries define in the network and loss function.
             # The summeries in the network and loss function are about the network variables.
             self.train_summary = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
-
             self.train_summary.append(tf.summary.scalar("loss", loss))
+            self.train_summary.append(tf.summary.scalar("regularization_loss", regularization_loss))
+
+            # We may have other losses (i.e. penalty term in attention layer)
+            penalty_loss = tf.get_collection("PENALTY")
+            if len(penalty_loss) != 0:
+                penalty_loss = tf.reduce_sum(penalty_loss)
+                total_loss += penalty_loss
+                self.train_summary.append(tf.summary.scalar("penalty_term", penalty_loss))
+
+            self.total_loss = total_loss
             self.train_summary.append(tf.summary.scalar("total_loss", total_loss))
             self.train_summary.append(tf.summary.scalar("learning_rate", self.learning_rate))
 
@@ -298,7 +294,7 @@ class TrainerMultiInput(Trainer):
             self.summary_writer = tf.summary.FileWriter(self.model, self.sess.graph)
         return
 
-    def train(self, data, spklist, learning_rate):
+    def train(self, data, spklist, learning_rate, aux_data=None):
         """Train the model.
 
         Args:
@@ -306,6 +302,7 @@ class TrainerMultiInput(Trainer):
             spklist: The spklist is a file map speaker name to the index.
             learning_rate: The learning rate is passed by the main program. The main program can easily tune the
                            learning rate according to the validation accuracy or anything else.
+            aux_data: The auxiliary data directory.
         """
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
@@ -318,8 +315,7 @@ class TrainerMultiInput(Trainer):
             curr_step = self.load()
 
         # The data loader
-        data_loader = KaldiMultiDataRandomQueue(data, spklist,
-                                                aux_data=self.params.aux_data_dir,
+        data_loader = KaldiMultiDataRandomQueue(data, aux_data, spklist,
                                                 num_parallel=self.params.num_parallel_datasets,
                                                 max_qsize=self.params.max_queue_size,
                                                 num_speakers=self.params.num_speakers_per_batch,
@@ -328,23 +324,25 @@ class TrainerMultiInput(Trainer):
                                                 max_len=self.params.max_segment_len,
                                                 shuffle=True)
         data_loader.start()
-
         epoch = int(curr_step / self.params.num_steps_per_epoch)
         for step in range(curr_step % self.params.num_steps_per_epoch, self.params.num_steps_per_epoch):
             try:
+                features, labels = data_loader.fetch()
+                feed_dict = {self.train_features: features["features"],
+                             self.train_labels: labels,
+                             self.global_step: curr_step,
+                             self.learning_rate: learning_rate}
+                for name in features:
+                    if name == "features":
+                        continue
+                    feed_dict[self.train_aux_features[name]] = features[name]
+
                 if step % self.params.save_summary_steps == 0 or step % self.params.show_training_progress == 0:
                     train_ops = [self.train_ops, self.train_op]
                     if step % self.params.save_summary_steps == 0:
                         train_ops.append(self.train_summary)
                     start_time = time.time()
-                    features, labels = data_loader.fetch()
-                    # TODO: Can I feed dict in the feed_dict?
-                    # Or I should feed separate element?
-                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features["features"],
-                                                                    self.train_aux_features: features["aux_features"],
-                                                                    self.train_labels: labels,
-                                                                    self.global_step: curr_step,
-                                                                    self.learning_rate: learning_rate})
+                    train_val = self.sess.run(train_ops, feed_dict=feed_dict)
                     end_time = time.time()
                     tf.logging.info(
                         "Epoch: [%2d] step: [%2d/%2d] time: %.4f s/step, raw loss: %f, total loss: %f"
@@ -354,12 +352,7 @@ class TrainerMultiInput(Trainer):
                         self.summary_writer.add_summary(train_val[-1], curr_step)
                 else:
                     # Only compute optimizer.
-                    features, labels = data_loader.fetch()
-                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features["features"],
-                                                                self.train_aux_features: features["aux_features"],
-                                                                self.train_labels: labels,
-                                                                self.global_step: curr_step,
-                                                                self.learning_rate: learning_rate})
+                    _ = self.sess.run(self.train_op, feed_dict=feed_dict)
 
                 if step % self.params.save_checkpoints_steps == 0 and curr_step != 0:
                     self.save(curr_step)
@@ -373,7 +366,7 @@ class TrainerMultiInput(Trainer):
 
         return
 
-    def train_tune_lr(self, data, spklist):
+    def train_tune_lr(self, data, spklist, aux_data=None):
         """Tune the learning rate.
 
         I think it is better to use sgd to test the learning rate.
@@ -383,12 +376,12 @@ class TrainerMultiInput(Trainer):
         Args:
             data: The training data directory.
             spklist: The spklist is a file map speaker name to the index.
+            aux_data: The auxiliary data directory.
         """
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
 
-        data_loader = KaldiMultiDataRandomQueue(data, spklist,
-                                                aux_data=self.params.aux_data_dir,
+        data_loader = KaldiMultiDataRandomQueue(data, aux_data, spklist,
                                                 num_parallel=self.params.num_parallel_datasets,
                                                 max_qsize=self.params.max_queue_size,
                                                 num_speakers=self.params.num_speakers_per_batch,
@@ -398,46 +391,43 @@ class TrainerMultiInput(Trainer):
                                                 shuffle=True)
         data_loader.start()
 
-        # The learning rate normally varies from 1e-4 to 1
+        # The learning rate normally varies from 1e-5 to 1
         # Some common values:
         # 1. factor = 1.15
         #    tune_period = 100
         #    tune_times = 100
-        #
-        # 2. factor = 1.25
-        #    tune_period = 100
-        #    tune_times = 50
-        init_learning_rate = 1e-4
+        init_learning_rate = 1e-5
         factor = 1.15
         tune_period = 100
         tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
-        for step in xrange(tune_period * tune_times):
+        for step in range(tune_period * tune_times):
             lr = init_learning_rate * (factor ** (step / tune_period))
+            features, labels = data_loader.fetch()
+            feed_dict = {self.train_features: features["features"],
+                         self.train_labels: labels,
+                         self.global_step: 0,
+                         self.learning_rate: lr}
+            for name in features:
+                if name == "features":
+                    continue
+                feed_dict[self.train_aux_features[name]] = features[name]
+
             try:
                 if step % tune_period == 0:
                     train_ops = [self.train_ops, self.train_op]
                     start_time = time.time()
-                    features, labels = data_loader.fetch()
-                    train_val = self.sess.run(train_ops, feed_dict={self.train_features: features["features"],
-                                                                    self.train_aux_features: features["aux_features"],
-                                                                    self.train_labels: labels,
-                                                                    self.global_step: 0,
-                                                                    self.learning_rate: lr})
+
+                    train_val = self.sess.run(train_ops, feed_dict=feed_dict)
                     end_time = time.time()
                     tf.logging.info(
-                        "Epoch: step: %2d time: %.4f s/step, raw loss: %f, total loss: %f" \
-                        % (step, end_time - start_time,
+                        "Epoch: step: %2d time: %.4f s/step, lr: %f, raw loss: %f, total loss: %f" \
+                        % (step, end_time - start_time, lr,
                            train_val[0]["raw_loss"], train_val[0]["loss"]))
                     fp_lr.write("%d %f %f\n" % (step, lr, train_val[0]["loss"]))
                 else:
-                    features, labels = data_loader.fetch()
-                    _ = self.sess.run(self.train_op, feed_dict={self.train_features: features["features"],
-                                                                self.train_aux_features: features["aux_features"],
-                                                                self.train_labels: labels,
-                                                                self.global_step: 0,
-                                                                self.learning_rate: lr})
+                    _ = self.sess.run(self.train_op, feed_dict=feed_dict)
             except DataOutOfRange:
                 tf.logging.info("Finished reading features.")
                 break
@@ -482,7 +472,7 @@ class TrainerMultiInput(Trainer):
         self.save(1)
         return
 
-    def valid(self, data, spklist, batch_type="softmax", output_embeddings=False):
+    def valid(self, data, spklist, batch_type="softmax", output_embeddings=False, aux_data=None):
         """Evaluate on the validation set
 
         Args:
@@ -494,6 +484,7 @@ class TrainerMultiInput(Trainer):
             output_embeddings: Set True to output the corresponding embeddings and labels of the valid set.
                                If output_embeddings, an additional valid metric (e.g. EER) should be computed outside
                                the function.
+            aux_data: The auxiliary data directory.
 
         :return: valid_loss, embeddings and labels (None if output_embeddings is False).
         """
@@ -517,8 +508,7 @@ class TrainerMultiInput(Trainer):
 
         if output_embeddings:
             # If we want to output embeddings, the features should be loaded in order
-            data_loader = KaldiMultiDataSeqQueue(data, spklist,
-                                                 aux_data=self.params.aux_data_dir,
+            data_loader = KaldiMultiDataSeqQueue(data, aux_data, spklist,
                                                  num_parallel=1,
                                                  max_qsize=10,
                                                  batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
@@ -535,10 +525,15 @@ class TrainerMultiInput(Trainer):
                     if num_batches % 100 == 0:
                         tf.logging.info("valid step: %d" % num_batches)
                     features, labels = data_loader.fetch()
-                    valid_val = self.sess.run(valid_ops_emb, feed_dict={self.valid_features: features["features"],
-                                                                        self.valid_aux_features: features["aux_features"],
-                                                                        self.valid_labels: labels,
-                                                                        self.global_step: curr_step})
+                    feed_dict = {self.valid_features: features["features"],
+                                 self.valid_labels: labels,
+                                 self.global_step: curr_step}
+                    for name in features:
+                        if name == "features":
+                            continue
+                        feed_dict[self.valid_aux_features[name]] = features[name]
+
+                    valid_val = self.sess.run(valid_ops_emb, feed_dict=feed_dict)
                     # Save the embeddings and labels
                     if embeddings_val is None:
                         embeddings_val = valid_val[-2]
@@ -553,8 +548,7 @@ class TrainerMultiInput(Trainer):
             data_loader.stop()
 
         if batch_type == "softmax":
-            data_loader = KaldiMultiDataSeqQueue(data, spklist,
-                                                 aux_data=self.params.aux_data_dir,
+            data_loader = KaldiMultiDataSeqQueue(data, aux_data, spklist,
                                                  num_parallel=2,
                                                  max_qsize=10,
                                                  batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
@@ -562,8 +556,7 @@ class TrainerMultiInput(Trainer):
                                                  max_len=self.params.max_segment_len,
                                                  shuffle=True)
         elif batch_type == "end2end":
-            data_loader = KaldiMultiDataRandomQueue(data, spklist,
-                                                    aux_data=self.params.aux_data_dir,
+            data_loader = KaldiMultiDataRandomQueue(data, aux_data, spklist,
                                                     num_parallel=2,
                                                     max_qsize=10,
                                                     num_speakers=self.params.num_speakers_per_batch,
@@ -575,15 +568,20 @@ class TrainerMultiInput(Trainer):
             raise ValueError
 
         data_loader.start()
-        for _ in xrange(self.params.valid_max_iterations):
+        for _ in range(self.params.valid_max_iterations):
             try:
                 if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
                 features, labels = data_loader.fetch()
-                valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features["features"],
-                                                                self.valid_aux_features: features["aux_features"],
-                                                                self.valid_labels: labels,
-                                                                self.global_step: curr_step})
+                feed_dict = {self.valid_features: features["features"],
+                             self.valid_labels: labels,
+                             self.global_step: curr_step}
+                for name in features:
+                    if name == "features":
+                        continue
+                    feed_dict[self.valid_aux_features[name]] = features[name]
+
+                valid_val = self.sess.run(valid_ops, feed_dict=feed_dict)
                 loss = valid_val[0]["valid_loss"]
                 num_batches += 1
             except DataOutOfRange:
@@ -608,17 +606,22 @@ class TrainerMultiInput(Trainer):
                 self.load()
             else:
                 sys.exit("Cannot find model in %s" % self.model)
-        features = features["features"]
-        aux_features = features["aux_features"]
-        rank = len(features.shape)
-        assert(rank == 2 or rank == 3)
-        assert(features.shape == aux_features.shape)
+
+        rank = len(features["features"].shape)
+        assert (rank == 2 or rank == 3)
         # Expand the feature if the rank is 2
         if rank == 2:
-            features = np.expand_dims(features, axis=0)
-            aux_features = np.expand_dims(aux_features, axis=0)
-        embeddings = self.sess.run(self.embeddings, feed_dict={self.pred_features: features,
-                                                               self.pred_aux_features: aux_features})
+            for name in features:
+                features[name] = np.expand_dims(features[name], axis=0)
+
+        feed_dict = {self.pred_features: features["features"]}
+        for name in features:
+            if name == "features":
+                continue
+            feed_dict[self.pred_aux_features[name]] = features[name]
+            assert(features["features"].shape == features[name].shape)
+
+        embeddings = self.sess.run(self.embeddings, feed_dict=feed_dict)
         if rank == 2:
             embeddings = np.squeeze(embeddings, axis=0)
         return embeddings
