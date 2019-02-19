@@ -279,7 +279,7 @@ if [ $stage -le 6 ]; then
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-  nnetdir=$exp/test
+  nnetdir=$exp/test_2
   nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/test.json \
     $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
     $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \

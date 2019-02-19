@@ -1,5 +1,5 @@
-# The kaldi sre egs directory
-kaldi_fisher=/home/liuyi/kaldi-master/egs/fisher
+# The virtualenv path
+export TF_ENV=/home/liuyi/venv
 
 export TF_KALDI_ROOT=/home/liuyi/kaldi-master/tf-kaldi-speaker
 export KALDI_ROOT=/home/liuyi/kaldi-master

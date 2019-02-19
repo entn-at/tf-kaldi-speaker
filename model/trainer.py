@@ -497,18 +497,18 @@ class Trainer(object):
         # The learning rate normally varies from 1e-5 to 1
         # Some common values:
         # 1. factor = 1.15
-        #    tune_period = 300
+        #    tune_period = 200
         #    tune_times = 100
         init_learning_rate = 1e-5
         factor = 1.15
-        tune_period = 300
+        tune_period = 150
         tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
         for step in range(tune_period * tune_times):
             lr = init_learning_rate * (factor ** (step // tune_period))
             try:
-                if step % 100 == 0:
+                if step % tune_period == 0:
                     train_ops = [self.train_ops, self.train_op, self.train_summary]
                     start_time = time.time()
                     features, labels = data_loader.fetch()

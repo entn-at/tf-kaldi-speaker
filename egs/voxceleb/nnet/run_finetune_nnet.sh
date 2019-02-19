@@ -62,7 +62,4 @@ else
 fi
 deactivate
 
-
-source $TF_ENV/$env/bin/activate
-$cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
-    python nnet/lib/train.py $cmdopts --config $config $train $train_spklist $valid $valid_spklist $nnetdir
+exit 0

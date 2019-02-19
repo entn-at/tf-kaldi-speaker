@@ -5,7 +5,7 @@ import numpy as np
 from multiprocessing import Process, Queue, Event
 from dataset.kaldi_io import FeatureReader
 from six.moves import range
-
+import time
 
 class DataOutOfRange(Exception):
     pass

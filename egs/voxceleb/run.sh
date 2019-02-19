@@ -21,7 +21,7 @@ exp=$root/exp
 mfccdir=$root/mfcc
 vaddir=$root/mfcc
 
-stage=7
+stage=13
 
 # The kaldi voxceleb egs directory
 kaldi_voxceleb=/home/heliang05/liuyi/software/kaldi_gpu/egs/voxceleb
@@ -434,11 +434,11 @@ if [ $stage -le 7 ]; then
 #    $data/voxceleb_train_combined_no_sil/softmax_valid $data/voxceleb_train_combined_no_sil/train/spklist \
 #    $nnetdir
 
-nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.25_linear_bn_1e-2
-nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.25_linear_bn_1e-2.json \
-    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
-    $data/voxceleb_train_combined_no_sil/softmax_valid $data/voxceleb_train_combined_no_sil/train/spklist \
-    $nnetdir
+#nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.25_linear_bn_1e-2
+#nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.25_linear_bn_1e-2.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/softmax_valid $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $nnetdir
 
 #nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.30_1e-2
 #nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.30_1e-2.json \
@@ -585,3 +585,53 @@ if [ $stage -le 12 ]; then
   tail -n 1 $nnetdir/scores/scores_voxceleb_test.plda.result
 fi
 
+
+if [ $stage -le 13 ]; then
+  # Continue training from softmax
+  pretrain_nnet=$exp/xvector_nnet_tdnn_softmax_1e-2_long
+  pretrain_ckpt=xxx
+  nnetdir=$exp/xvector_nnet_test
+  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+    --checkpoint $pretrain_ckpt \
+    nnet_conf/test.json \
+    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+    $pretrain_nnet $nnetdir
+
+  exit 1
+fi
+
+
+
+nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.30_linear_bn_1e-2
+checkpoint='last'
+
+if [ $stage -le 14 ]; then
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj 40 --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/voxceleb_test $nnetdir/xvectors_voxceleb_test
+fi
+
+if [ $stage -le 15 ]; then
+  # Cosine similarity
+  mkdir -p $nnetdir/scores
+  cat $voxceleb1_trials | awk '{print $1, $2}' | \
+    ivector-compute-dot-products - \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |" \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_voxceleb_test/xvector.scp ark:- |" \
+      $nnetdir/scores/scores_voxceleb_test.cos
+
+  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos) 2> /dev/null`
+  mindcf1=`sid/compute_min_dcf.py --c-miss 10 --p-target 0.01 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
+  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 $nnetdir/scores/scores_voxceleb_test.cos $voxceleb1_trials 2> /dev/null`
+  echo "EER: $eer%"
+  echo "minDCF(p-target=0.01): $mindcf1"
+  echo "minDCF(p-target=0.001): $mindcf2"
+
+  # Comment the following lines if you do not have matlab.
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos | grep ' target ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.cos.target
+  paste -d ' ' $voxceleb1_trials $nnetdir/scores/scores_voxceleb_test.cos | grep ' nontarget ' | awk '{print $NF}' > $nnetdir/scores/scores_voxceleb_test.cos.nontarget
+  comm=`echo "addpath('../../misc/DETware_v2.1');Get_DCF('$nnetdir/scores/scores_voxceleb_test.cos.target', '$nnetdir/scores/scores_voxceleb_test.cos.nontarget', '$nnetdir/scores/scores_voxceleb_test.cos.result');"`
+  echo "$comm"| matlab -nodesktop > /dev/null
+  tail -n 1 $nnetdir/scores/scores_voxceleb_test.cos.result
+fi
