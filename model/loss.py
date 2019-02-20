@@ -541,6 +541,8 @@ def angular_triplet_loss(features, labels, num_outputs, params, is_training=None
             triplet_loss = tf.maximum(hardest_negative_dist - hardest_positive_dist, 0.0)
             triplet_loss = tf.reduce_mean(triplet_loss)
 
+        tf.logging.info("The margin in the angular triplet loss is %f" % params.margin)
+        tf.summary.scalar("triplet_margin", params.margin)
         return triplet_loss
 
 

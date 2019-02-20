@@ -587,13 +587,63 @@ fi
 
 
 if [ $stage -le 13 ]; then
-  # Continue training from softmax
-  pretrain_nnet=$exp/xvector_nnet_tdnn_softmax_1e-2_long
-  pretrain_ckpt=xxx
-  nnetdir=$exp/xvector_nnet_test
+#  # Continue training from softmax
+#  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  pretrain_ckpt=1440000
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_all_linear_bn_m1_1e-2
+#  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+#    --checkpoint $pretrain_ckpt \
+#    nnet_conf/tdnn_amsoftmax_ame2e_all_linear_bn_m1_1e-2.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $pretrain_nnet $nnetdir
+
+#  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  pretrain_ckpt=1440000
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_all_linear_bn_m1_1e-4
+#  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+#    --checkpoint $pretrain_ckpt \
+#    nnet_conf/tdnn_amsoftmax_ame2e_all_linear_bn_m1_1e-4.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $pretrain_nnet $nnetdir
+
+#  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  pretrain_ckpt=1440000
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_all_linear_bn_m1_1e-6
+#  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+#    --checkpoint $pretrain_ckpt \
+#    nnet_conf/tdnn_amsoftmax_ame2e_all_linear_bn_m1_1e-6.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $pretrain_nnet $nnetdir
+
+#  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  pretrain_ckpt=1440000
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_hard_linear_bn_m1_1e-2
+#  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+#    --checkpoint $pretrain_ckpt \
+#    nnet_conf/tdnn_amsoftmax_ame2e_hard_linear_bn_m1_1e-2.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $pretrain_nnet $nnetdir
+
+#  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  pretrain_ckpt=1440000
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_hard_linear_bn_m1_1e-4
+#  nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
+#    --checkpoint $pretrain_ckpt \
+#    nnet_conf/tdnn_amsoftmax_ame2e_hard_linear_bn_m1_1e-4.json \
+#    $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
+#    $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
+#    $pretrain_nnet $nnetdir
+
+  pretrain_nnet=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+  pretrain_ckpt=1440000
+  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_mid_ame2e_hard_linear_bn_m1_1e-6
   nnet/run_finetune_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false \
     --checkpoint $pretrain_ckpt \
-    nnet_conf/test.json \
+    nnet_conf/tdnn_amsoftmax_ame2e_hard_linear_bn_m1_1e-6.json \
     $data/voxceleb_train_combined_no_sil/train $data/voxceleb_train_combined_no_sil/train/spklist \
     $data/voxceleb_train_combined_no_sil/end2end_valid $data/voxceleb_train_combined_no_sil/end2end_valid/spklist \
     $pretrain_nnet $nnetdir

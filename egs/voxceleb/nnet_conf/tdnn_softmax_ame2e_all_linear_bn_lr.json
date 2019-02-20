@@ -2,13 +2,14 @@
   "seed": 0,
   "network_type": "tdnn",
   "last_layer_no_bn": false,
-  "last_layer_linear": false,
+  "last_layer_linear": true,
   "feature_norm": true,
+  "feature_scaling_factor": 1,
 
   "loss_func": "angular_triplet_loss",
   "loss_type": "additive_margin_softmax",
-  "margin": 0.2,
-  "triplet_type": "hard",
+  "margin": 0.5,
+  "triplet_type": "all",
 
   "excluded_params_list": [],
 
@@ -39,6 +40,6 @@
   "min_segment_len": 200,
   "max_segment_len": 400,
 
-  "early_stop_epochs": 10,
+  "early_stop_epochs": 8,
   "min_learning_rate": 1e-6
 }

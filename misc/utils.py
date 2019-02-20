@@ -108,14 +108,14 @@ def save_codes_and_config(cont, model, config):
     return params
 
 
-def get_pretrain_model(checkpoint, pretrain_model, target_model):
+def get_pretrain_model(pretrain_model, target_model, checkpoint='-1'):
     """Get the pre-trained model and copy to the target model as the initial version.
 
         Note: After the copy, the checkpoint becomes 0.
     Args:
-        checkpoint: The checkpoint in the pre-trained model directory.
         pretrain_model: The pre-trained model directory.
         target_model: The target model directory.
+        checkpoint: The checkpoint in the pre-trained model directory. If None, set to the BEST one. Also support "last"
     """
     if not os.path.isfile(os.path.join(pretrain_model, "checkpoint")):
         sys.exit("[ERROR] Cannot find checkpoint in %s." % pretrain_model)
@@ -129,19 +129,38 @@ def get_pretrain_model(checkpoint, pretrain_model, target_model):
 
     steps = [int(c.rsplit('-', 1)[1]) for c in all_model_checkpoint_paths]
     steps = sorted(steps)
-    if checkpoint == -1:
+
+    if checkpoint == "last":
+        tf.logging.info("Load the last saved model.")
         checkpoint = steps[-1]
+    else:
+        checkpoint = int(checkpoint)
+        if checkpoint == -1:
+            tf.logging.info("Load the best model according to valid_loss")
+            min_epoch = -1
+            min_loss = 1e10
+            with open(os.path.join(pretrain_model, "valid_loss")) as f:
+                for line in f.readlines():
+                    epoch, loss, eer = line.split(" ")
+                    epoch = int(epoch)
+                    loss = float(loss)
+                    if loss < min_loss:
+                        min_loss = loss
+                        min_epoch = epoch
+                # Add 1 to min_epoch since epoch is 0-based
+                config_json = os.path.join(pretrain_model, "config.json")
+                params = Params(config_json)
+                checkpoint = (min_epoch + 1) * params.num_steps_per_epoch
     assert checkpoint in steps, "The checkpoint %d not in the model directory" % checkpoint
 
     pretrain_model_checkpoint_path = model_checkpoint_path.rsplit("-", 1)[0] + "-" + str(checkpoint)
+    tf.logging.info("Copy the pre-trained model %s as the fine-tuned initialization" % pretrain_model_checkpoint_path)
+
     import glob
     for filename in glob.glob(pretrain_model_checkpoint_path + "*"):
         bas = os.path.basename(filename).split("-", 1)[0]
         ext = os.path.basename(filename).rsplit(".", 1)[1]
         shutil.copyfile(filename, os.path.join(target_model, bas + "-0." + ext))
-
-    # Copy the checkpoint file and the model to the target directory.
-    shutil.copyfile(os.path.join(pretrain_model, "checkpoint"), os.path.join(target_model, "checkpoint"))
 
     with open(os.path.join(target_model, "checkpoint"), "w") as f:
         f.write("model_checkpoint_path: \"%s\"\n" % os.path.join(target_model, os.path.basename(model_checkpoint_path).rsplit("-", 1)[0] + "-0"))
@@ -158,12 +177,12 @@ class ValidLoss():
 
 def load_lr(filename):
     """Load learning rate from a saved file"""
-    val = 0
+    learning_rate_array = []
     with open(filename, "r") as f:
         for line in f.readlines():
             _, lr = line.strip().split(" ")
-            val = float(lr)
-    return val
+            learning_rate_array.append(float(lr))
+    return learning_rate_array
 
 
 def load_valid_loss(filename):

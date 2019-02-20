@@ -366,7 +366,7 @@ class TrainerMultiInput(Trainer):
 
         return
 
-    def train_tune_lr(self, data, spklist, aux_data=None):
+    def train_tune_lr(self, data, spklist, tune_period=100, aux_data=None):
         """Tune the learning rate.
 
         I think it is better to use sgd to test the learning rate.
@@ -376,6 +376,7 @@ class TrainerMultiInput(Trainer):
         Args:
             data: The training data directory.
             spklist: The spklist is a file map speaker name to the index.
+            tune_period: How many steps per learning rate.
             aux_data: The auxiliary data directory.
         """
         # initialize all variables
@@ -398,7 +399,6 @@ class TrainerMultiInput(Trainer):
         #    tune_times = 100
         init_learning_rate = 1e-5
         factor = 1.15
-        tune_period = 100
         tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")

@@ -1,10 +1,10 @@
 #!/bin/bash
 
 cmd="run.pl"
-continue_training=false
 env=tf_gpu
 num_gpus=1
 checkpoint=-1
+tune_period=100
 
 echo "$0 $@"
 
@@ -14,7 +14,7 @@ if [ -f path.sh ]; then . ./path.sh; fi
 if [ $# != 7 ]; then
   echo "Usage: $0 [options] <config> <train-dir> <train-spklist> <valid-dir> <valid-spklist> <pretrained-nnet> <nnet>"
   echo "Options:"
-  echo "  --continue-training <false>"
+  echo "  --tune-period <100>"
   echo "  --checkpoint <-1>"
   echo "  --env <tf_gpu>"
   echo "  --num-gpus <n_gpus>"
@@ -52,14 +52,8 @@ while [ $num_gpus_assigned -ne $num_gpus ]; do
 done
 
 source $TF_ENV/$env/bin/activate
-if [ $continue_training == 'true' ]; then
-  # When continue training, just call the train.py
-  $cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
-    python nnet/lib/train.py -c --config $config $train $train_spklist $valid $valid_spklist $nnetdir
-else
-  $cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
-    python nnet/lib/finetune.py --checkpoint $checkpoint --config $config $train $train_spklist $valid $valid_spklist $pretrain_nnetdir $nnetdir
-fi
+$cmd $nnetdir/log/finetune_lr_learning.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
+  python nnet/lib/finetune_lr_learning.py --tune_period $tune_period --checkpoint $checkpoint --config $config $train $train_spklist $valid $valid_spklist $pretrain_nnetdir $nnetdir
 deactivate
 
 exit 0

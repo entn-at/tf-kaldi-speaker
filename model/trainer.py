@@ -263,6 +263,16 @@ class Trainer(object):
                 elif loss_type == "additive_angular_margin_softmax":
                     train_margin = self.params.arcsoftmax_m
                     self.params.arcsoftmax_m = 0
+                elif loss_type == "angular_triplet_loss":
+                    train_margin = self.params.margin
+                    train_triplet_type = self.params.triplet_type
+                    train_loss_type = self.params.loss_type
+
+                    # Set the additive margin. All sampling.
+                    # Since 2.0 > cos(theta_p) - cos(theta_n), when margin = 2.0, every triplet counts.
+                    self.params.margin = 2.0
+                    self.params.triplet_type = "all"
+                    self.params.loss_type = "additive_margin_softmax"
                 else:
                     pass
 
@@ -278,6 +288,10 @@ class Trainer(object):
                     self.params.amsoftmax_m = train_margin
                 elif loss_type == "additive_angular_margin_softmax":
                     self.params.arcsoftmax_m = train_margin
+                elif loss_type == "angular_triplet_loss":
+                    self.params.margin = train_margin
+                    self.params.triplet_type = train_triplet_type
+                    self.params.loss_type = train_loss_type
                 else:
                     pass
 
@@ -469,20 +483,23 @@ class Trainer(object):
 
         return
 
-    def train_tune_lr(self, data, spklist, aux_data=None):
+    def train_tune_lr(self, data, spklist, tune_period=100, aux_data=None):
         """Tune the learning rate.
-
-        I think it is better to use sgd to test the learning rate.
 
         According to: https://www.kdnuggets.com/2017/11/estimating-optimal-learning-rate-deep-neural-network.html
 
         Args:
             data: The training data directory.
             spklist: The spklist is a file map speaker name to the index.
+            tune_period: How many steps per learning rate.
             aux_data: The auxiliary data directory.
         """
         # initialize all variables
         self.sess.run(tf.global_variables_initializer())
+
+        # We need to load the model sometimes, since we may try to find the learning rate for fine-tuning.
+        if os.path.isfile(os.path.join(self.model, "checkpoint")):
+            self.load()
 
         data_loader = KaldiDataRandomQueue(data, spklist,
                                            num_parallel=self.params.num_parallel_datasets,
@@ -501,7 +518,6 @@ class Trainer(object):
         #    tune_times = 100
         init_learning_rate = 1e-5
         factor = 1.15
-        tune_period = 150
         tune_times = 100
 
         fp_lr = open(os.path.join(self.model, "learning_rate_tuning"), "w")
@@ -534,43 +550,6 @@ class Trainer(object):
                 break
         data_loader.stop()
         fp_lr.close()
-        return
-
-    def get_finetune_model(self, exclude_list):
-        """Start from a pre-trained model and other parameters are initialized using default initializer.
-        Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
-        we need to fully load the model rather than loading part of the graph.
-
-        Args:
-            exclude_list: A list. Do NOT restore the parameters in the exclude_list. This is useful in fine-truning
-                          an existing model. We load a part of the pre-trained model and leave the other part
-                          randomly initialized.
-        Deprecated:
-            data: The training data directory.
-            spklist: The spklist is a file map speaker name to the index.
-            learning_rate: The learning rate is passed by the main program. The main program can easily tune the
-                           learning rate according to the validation accuracy or anything else.
-        """
-        # initialize all variables
-        self.sess.run(tf.global_variables_initializer())
-
-        # Load parts of the model
-        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-        restore_variables = []
-        for v in variables:
-            if not substring_in_list(v.name, exclude_list):
-                restore_variables.append(v)
-            else:
-                tf.logging.info("[Info] Ignore %s when loading the checkpoint" % v.name)
-        finetune_saver = tf.train.Saver(var_list=restore_variables)
-        ckpt = tf.train.get_checkpoint_state(self.model)
-        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
-        finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
-
-        # Save the new model. The new model is basically the same with the pre-trained one, while parameters
-        # NOT in the pre-trained model are random initialized.
-        # Set the step to 1.
-        self.save(1)
         return
 
     def valid(self, data, spklist, batch_type="softmax", output_embeddings=False, aux_data=None):
@@ -610,7 +589,7 @@ class Trainer(object):
         if output_embeddings:
             # If we want to output embeddings, the features should be loaded in order
             data_loader = KaldiDataSeqQueue(data, spklist,
-                                            num_parallel=1,
+                                            num_parallel=2,
                                             max_qsize=10,
                                             batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
                                             min_len=self.params.min_segment_len,
@@ -751,3 +730,50 @@ class Trainer(object):
         batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
         with tf.control_dependencies(batchnorm_update_ops):
             self.train_op = self.optimizer.apply_gradients(grads)
+
+    def get_finetune_model(self, excluded_list):
+        """Start from a pre-trained model and other parameters are initialized using default initializer.
+        Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
+        we need to fully load the model rather than loading part of the graph.
+
+        The pre-trained model is saved in the model directory as index 0.
+        Backup the pre-trained model and save the new model (with random initialized parameters) as index 0 instead.
+
+        Args:
+            excluded_list: A list. Do NOT restore the parameters in the exclude_list. This is useful in fine-truning
+                          an existing model. We load a part of the pre-trained model and leave the other part
+                          randomly initialized.
+        Deprecated:
+            data: The training data directory.
+            spklist: The spklist is a file map speaker name to the index.
+            learning_rate: The learning rate is passed by the main program. The main program can easily tune the
+                           learning rate according to the validation accuracy or anything else.
+        """
+        # initialize all variables
+        self.sess.run(tf.global_variables_initializer())
+
+        # Load parts of the model
+        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+        restore_variables = []
+        for v in variables:
+            if not substring_in_list(v.name, excluded_list):
+                restore_variables.append(v)
+            else:
+                tf.logging.info("[Info] Ignore %s when loading the checkpoint" % v.name)
+        finetune_saver = tf.train.Saver(var_list=restore_variables)
+        ckpt = tf.train.get_checkpoint_state(self.model)
+        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+        finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
+
+        # Backup the old files
+        import glob, shutil
+        model_checkpoint_path = ckpt.model_checkpoint_path
+        for filename in glob.glob(model_checkpoint_path + "*"):
+            shutil.copyfile(filename, filename + '.bak')
+
+        # Save the new model. The new model is basically the same with the pre-trained one, while parameters
+        # NOT in the pre-trained model are random initialized.
+        # Set the step to 0.
+        self.save(0)
+        return
+

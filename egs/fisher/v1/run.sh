@@ -16,7 +16,8 @@ data=$root/data
 exp=$root/exp
 mfccdir=$root/mfcc
 vaddir=$root/mfcc
-trials=$data/test/trials
+
+export trials=$data/test/trials
 
 stage=3
 
@@ -145,86 +146,62 @@ if [ $stage -le 5 ]; then
   lda_dim=150
 
   $train_cmd $nnetdir/xvectors_background-ivector_hires/log/compute_mean.log \
-    ivector-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector_train_background-ivector_hires.scp $nnetdir/xvectors_background-ivector_hires/mean.vec || exit 1;
+    ivector-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector.scp $nnetdir/xvectors_background-ivector_hires/mean.vec || exit 1;
 
   $train_cmd $nnetdir/xvectors_background-ivector_hires/log/lda.log \
     ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector_train_background-ivector_hires.scp ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector.scp ark:- |" \
     ark:$data/train_background-ivector_hires/utt2spk $nnetdir/xvectors_background-ivector_hires/transform.mat || exit 1;
 
   #  Train the PLDA model.
   $train_cmd $nnetdir/xvectors_background-ivector_hires/log/plda_lda${lda_dim}.log \
     ivector-compute-plda ark:$data/train_background-ivector_hires/spk2utt \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector_train_background-ivector_hires.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_background-ivector_hires/xvector.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     $nnetdir/xvectors_background-ivector_hires/plda_lda${lda_dim} || exit 1;
 
   $train_cmd $nnetdir/xvector_scores_hires/log/test.log \
     ivector-plda-scoring --normalize-length=true \
     --num-utts=ark:$nnetdir/xvectors_enroll_hires/num_utts.ark \
     "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_background-ivector_hires/plda_lda${lda_dim} - |" \
-    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector_enroll_hires.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec scp:$nnetdir/xvectors_test_hires/xvector_test_hires.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec scp:$nnetdir/xvectors_test_hires/xvector.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "cat '$trials' | cut -d\  --fields=1,2 |" $nnetdir/xvector_scores_hires/test || exit 1;
-
-#   python utils/recover_scores.py $trials $nnetdir/xvector_scores_hires/test > $nnetdir/xvector_scores_hires/fisher_test.rec
-  eer=$(paste $trials $nnetdir/xvector_scores_hires/test | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  echo "EER: ${eer}%"
-
-  paste $trials $nnetdir/xvector_scores_hires/test | awk '{print $6, $3}' > $nnetdir/xvector_scores_hires/test.new
-  grep ' target$' $nnetdir/xvector_scores_hires/test.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test.target
-  grep ' nontarget$' $nnetdir/xvector_scores_hires/test.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores_hires/test.target', '$nnetdir/xvector_scores_hires/test.nontarget', '$nnetdir/xvector_scores_hires/test_lda_plda.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  rm -f $nnetdir/xvector_scores_hires/test.new $nnetdir/xvector_scores_hires/test.target $nnetdir/xvector_scores_hires/test.nontarget
-  tail -n 1 $nnetdir/xvector_scores_hires/test_lda_plda.result
-
-
-  # Cosine scoring
-  $train_cmd $nnetdir/xvector_scores_hires/log/test_cos.log \
-    ivector-compute-dot-products "cat '$trials' | cut -d\  --fields=1,2 |" \
-    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector_enroll_hires.scp ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-normalize-length scp:$nnetdir/xvectors_test_hires/xvector_test_hires.scp ark:- |" \
-    $nnetdir/xvector_scores_hires/test_cos
-
-#  python utils/recover_scores.py $trials $nnetdir/xvector_scores_hires/test_cos > $nnetdir/xvector_scores_hires/test_cos.rec
-  eer=$(paste $trials $nnetdir/xvector_scores_hires/test_cos | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  echo "EER: ${eer}%"
-
-  paste $trials $nnetdir/xvector_scores_hires/test_cos | awk '{print $6, $3}' > $nnetdir/xvector_scores_hires/test_cos.new
-  grep ' target$' $nnetdir/xvector_scores_hires/test_cos.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test_cos.target
-  grep ' nontarget$' $nnetdir/xvector_scores_hires/test_cos.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test_cos.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores_hires/test_cos.target', '$nnetdir/xvector_scores_hires/test_cos.nontarget', '$nnetdir/xvector_scores_hires/test_cos.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  rm -f $nnetdir/xvector_scores_hires/test_cos.new $nnetdir/xvector_scores_hires/test_cos.target $nnetdir/xvector_scores_hires/test_cos.nontarget
-  tail -n 1 $nnetdir/xvector_scores_hires/test_cos.result
-
 
   # LDA + Cosine scoring
   $train_cmd $nnetdir/xvector_scores_hires/log/test_lda_cos.log \
     ivector-compute-dot-products "cat '$trials' | cut -d\  --fields=1,2 |" \
-    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector_enroll_hires.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec scp:$nnetdir/xvectors_test_hires/xvector_test_hires.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_background-ivector_hires/mean.vec scp:$nnetdir/xvectors_test_hires/xvector.scp ark:- | transform-vec $nnetdir/xvectors_background-ivector_hires/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     $nnetdir/xvector_scores_hires/test_lda_cos
 
-#  python utils/recover_scores.py $trials $nnetdir/xvector_scores_hires/test_lda_cos > $nnetdir/xvector_scores_hires/test_lda_cos.rec
-  eer=$(paste $trials $nnetdir/xvector_scores_hires/test_lda_cos | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  echo "EER: ${eer}%"
-
-  paste $trials $nnetdir/xvector_scores_hires/test_lda_cos | awk '{print $6, $3}' > $nnetdir/xvector_scores_hires/test_lda_cos.new
-  grep ' target$' $nnetdir/xvector_scores_hires/test_lda_cos.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test_lda_cos.target
-  grep ' nontarget$' $nnetdir/xvector_scores_hires/test_lda_cos.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores_hires/test_lda_cos.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores_hires/test_lda_cos.target', '$nnetdir/xvector_scores_hires/test_lda_cos.nontarget', '$nnetdir/xvector_scores_hires/test_lda_cos.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  rm -f $nnetdir/xvector_scores_hires/test_lda_cos.new $nnetdir/xvector_scores_hires/test_lda_cos.target $nnetdir/xvector_scores_hires/test_lda_cos.nontarget
-  tail -n 1 $nnetdir/xvector_scores_hires/test_lda_cos.result
+  eval_plda.sh $nnetdir
+  exit 1
 fi
 
 
+nnetdir=$exp/xvector_nnet_tdnn_softmax
+checkpoint='last'
+
+if [ $stage -le 6 ]; then
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/enroll_hires $nnetdir/xvectors_enroll_hires
+
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/test_hires $nnetdir/xvectors_test_hires
+fi
+
+if [ $stage -le 7 ]; then
+  # Cosine scoring
+  $train_cmd $nnetdir/xvector_scores_hires/log/test_cos.log \
+    ivector-compute-dot-products "cat '$trials' | cut -d\  --fields=1,2 |" \
+    "ark:ivector-mean ark:$data/enroll_hires/spk2utt scp:$nnetdir/xvectors_enroll_hires/xvector.scp ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-normalize-length scp:$nnetdir/xvectors_test_hires/xvector.scp ark:- |" \
+    $nnetdir/xvector_scores_hires/test_cos
+
+  eval_cos.sh $nnetdir
+  exit 1
+fi
 
 

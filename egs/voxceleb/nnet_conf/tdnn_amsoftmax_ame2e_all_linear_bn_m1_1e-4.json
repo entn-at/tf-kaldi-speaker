@@ -2,13 +2,14 @@
   "seed": 0,
   "network_type": "tdnn",
   "last_layer_no_bn": false,
-  "last_layer_linear": false,
+  "last_layer_linear": true,
   "feature_norm": true,
+  "feature_scaling_factor": 1,
 
   "loss_func": "angular_triplet_loss",
   "loss_type": "additive_margin_softmax",
-  "margin": 0.2,
-  "triplet_type": "hard",
+  "margin": 1.0,
+  "triplet_type": "all",
 
   "excluded_params_list": [],
 
@@ -16,16 +17,16 @@
   "pooling_type": "statistics_pooling",
   "embedding_node": "output",
 
-  "learning_rate": 0.01,
+  "learning_rate": 0.001,
   "use_nesterov": false,
   "clip_gradient": false,
 
-  "weight_l2_regularizer": 1e-2,
+  "weight_l2_regularizer": 1e-4,
   "batchnorm_momentum": 0.99,
 
   "num_epochs": 100,
   "num_steps_per_epoch": 3000,
-  "reduce_lr_epochs": 4,
+  "reduce_lr_epochs": 2,
   "show_training_progress": 100,
   "keep_checkpoint_max": 100,
   "save_summary_steps": 1000,
@@ -39,6 +40,6 @@
   "min_segment_len": 200,
   "max_segment_len": 400,
 
-  "early_stop_epochs": 10,
+  "early_stop_epochs": 6,
   "min_learning_rate": 1e-6
 }

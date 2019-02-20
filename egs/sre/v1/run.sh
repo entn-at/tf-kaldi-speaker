@@ -23,9 +23,9 @@
 set -e
 
 fea_nj=32
-nnet_nj=32
+nnet_nj=80
 
-data_root=/mnt/lv10/person/liuyi/ly_list/sre16_kaldi_list/
+data_root=/home/heliang05/liuyi/sre.full/sre16_kaldi_list/
 root=/home/heliang05/liuyi/sre.full/
 data=$root/data
 exp=$root/exp
@@ -33,15 +33,16 @@ mfccdir=$root/mfcc
 vaddir=$root/mfcc
 
 gender=pool
-sre10_dir=$data_root/sre10_eval/
-sre10_train_c5_ext=$sre10_dir/coreext_c5/enroll/$gender/
-sre10_trials_c5_ext=$sre10_dir/coreext_c5/test/$gender/
-sre10_train_10s=$sre10_dir/10sec/enroll/$gender/
-sre10_trials_10s=$sre10_dir/10sec/test/$gender/
 
-sre16_trials=/mnt/lv10/person/liuyi/sre16/data/sre16_eval_test/trials
-sre16_trials_tgl=/mnt/lv10/person/liuyi/sre16/data/sre16_eval_test/trials_tgl
-sre16_trials_yue=/mnt/lv10/person/liuyi/sre16/data/sre16_eval_test/trials_yue
+export sre10_dir=$data_root/sre10_eval/
+export sre10_train_c5_ext=$sre10_dir/coreext_c5/enroll/$gender/
+export sre10_trials_c5_ext=$sre10_dir/coreext_c5/test/$gender/
+export sre10_train_10s=$sre10_dir/10sec/enroll/$gender/
+export sre10_trials_10s=$sre10_dir/10sec/test/$gender/
+
+export sre16_trials=/home/heliang05/liuyi/sre.full/sre16_eval_test/trials
+export sre16_trials_tgl=/home/heliang05/liuyi/sre.full/sre16_eval_test/trials_tgl
+export sre16_trials_yue=/home/heliang05/liuyi/sre.full/sre16_eval_test/trials_yue
 
 rirs_noises=/mnt/lv10/person/liuyi/ly_database/RIRS_NOISES/
 musan=/mnt/lv10/person/liuyi/ly_database/musan/
@@ -49,7 +50,7 @@ musan=/mnt/lv10/person/liuyi/ly_database/musan/
 # The kaldi sre egs directory
 kaldi_sre=/home/heliang05/liuyi/software/kaldi_gpu/egs/sre16
 
-stage=6
+stage=8
 
 if [ $stage -le -1 ]; then
     # link the directories
@@ -289,7 +290,7 @@ exit 1
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-4
 checkpoint='last'
 
 if [ $stage -le 7 ];then
@@ -314,166 +315,51 @@ if [ $stage -le 7 ];then
     $nnetdir $data/sre10_test_10s_$gender $nnetdir/xvectors_sre10_test_10s_$gender
 fi
 
-# Test on NIST SRE 2010
+# PLDA scoring on NIST SRE 2010
 if [ $stage -le 8 ]; then
   ### !!! Re-train LDA and PLDA models when it is referred again
   lda_dim=150
 
   $train_cmd $nnetdir/xvectors_sre_combined/log/compute_mean.log \
-    ivector-mean scp:$nnetdir/xvectors_sre_combined/xvector_sre_combined.scp \
+    ivector-mean scp:$nnetdir/xvectors_sre_combined/xvector.scp \
     $nnetdir/xvectors_sre_combined/mean.vec || exit 1;
 
   # This script uses LDA to decrease the dimensionality prior to PLDA.
   $train_cmd $nnetdir/xvectors_sre_combined/log/lda.log \
     ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector_sre_combined.scp ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector.scp ark:- |" \
     ark:$data/sre_combined/utt2spk $nnetdir/xvectors_sre_combined/transform.mat || exit 1;
 
   $train_cmd $nnetdir/xvectors_sre_combined/log/plda_lda${lda_dim}.log \
     ivector-compute-plda ark:$data/sre_combined/spk2utt \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector_sre_combined.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
     $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} || exit 1;
-
 
   # Coreext C5
   $train_cmd $nnetdir/xvector_scores/log/sre10_coreext_c5_$gender.log \
     ivector-plda-scoring --normalize-length=true \
     --num-utts=ark:$nnetdir/xvectors_sre10_enroll_coreext_c5_$gender/num_utts.ark \
     "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} - |" \
-    "ark:ivector-mean ark:$data/sre10_enroll_coreext_c5_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_coreext_c5_$gender/xvector_sre10_enroll_coreext_c5_${gender}.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec scp:$nnetdir/xvectors_sre10_test_coreext_c5_$gender/xvector_sre10_test_coreext_c5_${gender}.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/sre10_enroll_coreext_c5_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_coreext_c5_$gender/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec scp:$nnetdir/xvectors_sre10_test_coreext_c5_$gender/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "cat '$data/sre10_test_coreext_c5_$gender/trials' | cut -d\  --fields=1,2 |" $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender || exit 1;
-
-  if [ $gender == 'pool' ]; then
-    cp $sre10_trials_c5_ext/../male/trials $data/sre10_test_coreext_c5_$gender/trials_male
-    cp $sre10_trials_c5_ext/../female/trials $data/sre10_test_coreext_c5_$gender/trials_female
-    utils/filter_scp.pl $data/sre10_test_coreext_c5_$gender/trials_male $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender > $nnetdir/xvector_scores/sre10_coreext_c5_scores_male
-    utils/filter_scp.pl $data/sre10_test_coreext_c5_$gender/trials_female $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender > $nnetdir/xvector_scores/sre10_coreext_c5_scores_female
-    pooled_eer=$(paste $data/sre10_test_coreext_c5_$gender/trials $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-    male_eer=$(paste $data/sre10_test_coreext_c5_$gender/trials_male $nnetdir/xvector_scores/sre10_coreext_c5_scores_male | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-    female_eer=$(paste $data/sre10_test_coreext_c5_$gender/trials_female $nnetdir/xvector_scores/sre10_coreext_c5_scores_female | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-    echo "EER: Pooled ${pooled_eer}%, Male ${male_eer}%, Female ${female_eer}%"
-
-    paste $data/sre10_test_coreext_c5_$gender/trials $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.result
-
-    paste $data/sre10_test_coreext_c5_$gender/trials_male $nnetdir/xvector_scores/sre10_coreext_c5_scores_male | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_coreext_c5_scores_male.target', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_male.nontarget', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_male.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.new $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.target $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_coreext_c5_scores_male.result
-
-    paste $data/sre10_test_coreext_c5_$gender/trials_female $nnetdir/xvector_scores/sre10_coreext_c5_scores_female | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_coreext_c5_scores_female.target', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_female.nontarget', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_female.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.new $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.target $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_coreext_c5_scores_female.result
-
-  else
-    eer=$(paste $data/sre10_test_coreext_c5_$gender/trials $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-    echo "EER: ${eer}%"
-
-    paste $data/sre10_test_coreext_c5_$gender/trials_$gender $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget', '$nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.new $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.target $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_coreext_c5_scores_${gender}.result
-  fi
 
   # 10s-10s
   $train_cmd $nnetdir/xvector_scores/log/sre10_10s_$gender.log \
     ivector-plda-scoring --normalize-length=true \
     --num-utts=ark:$nnetdir/xvectors_sre10_enroll_10s_$gender/num_utts.ark \
     "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} - |" \
-    "ark:ivector-mean ark:$data/sre10_enroll_10s_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_10s_$gender/xvector_sre10_enroll_10s_${gender}.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec scp:$nnetdir/xvectors_sre10_test_10s_$gender/xvector_sre10_test_10s_${gender}.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/sre10_enroll_10s_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_10s_$gender/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre_combined/mean.vec scp:$nnetdir/xvectors_sre10_test_10s_$gender/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "cat '$data/sre10_test_10s_$gender/trials' | cut -d\  --fields=1,2 |" $nnetdir/xvector_scores/sre10_10s_scores_$gender || exit 1;
 
-  if [ $gender == 'pool' ]; then
-      cp $sre10_trials_10s/../male/trials $data/sre10_test_10s_$gender/trials_male
-      cp $sre10_trials_10s/../female/trials $data/sre10_test_10s_$gender/trials_female
-      utils/filter_scp.pl $data/sre10_test_10s_$gender/trials_male $nnetdir/xvector_scores/sre10_10s_scores_$gender > $nnetdir/xvector_scores/sre10_10s_scores_male
-      utils/filter_scp.pl $data/sre10_test_10s_$gender/trials_female $nnetdir/xvector_scores/sre10_10s_scores_$gender > $nnetdir/xvector_scores/sre10_10s_scores_female
-      pooled_eer=$(paste $data/sre10_test_10s_$gender/trials $nnetdir/xvector_scores/sre10_10s_scores_$gender | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-      male_eer=$(paste $data/sre10_test_10s_$gender/trials_male $nnetdir/xvector_scores/sre10_10s_scores_male | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-      female_eer=$(paste $data/sre10_test_10s_$gender/trials_female $nnetdir/xvector_scores/sre10_10s_scores_female | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-      echo "EER: Pooled ${pooled_eer}%, Male ${male_eer}%, Female ${female_eer}%"
-
-    paste $data/sre10_test_10s_$gender/trials $nnetdir/xvector_scores/sre10_10s_scores_$gender | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_10s_scores_${gender}.target', '$nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget', '$nnetdir/xvector_scores/sre10_10s_scores_${gender}.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new $nnetdir/xvector_scores/sre10_10s_scores_${gender}.target $nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_10s_scores_${gender}.result
-
-    paste $data/sre10_test_10s_$gender/trials_male $nnetdir/xvector_scores/sre10_10s_scores_male | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_10s_scores_male.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_10s_scores_male.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_male.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_10s_scores_male.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_male.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_10s_scores_male.target', '$nnetdir/xvector_scores/sre10_10s_scores_male.nontarget', '$nnetdir/xvector_scores/sre10_10s_scores_male.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_10s_scores_male.new $nnetdir/xvector_scores/sre10_10s_scores_male.target $nnetdir/xvector_scores/sre10_10s_scores_male.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_10s_scores_male.result
-
-    paste $data/sre10_test_10s_$gender/trials_female $nnetdir/xvector_scores/sre10_10s_scores_female | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_10s_scores_female.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_10s_scores_female.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_female.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_10s_scores_female.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_female.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_10s_scores_female.target', '$nnetdir/xvector_scores/sre10_10s_scores_female.nontarget', '$nnetdir/xvector_scores/sre10_10s_scores_female.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_10s_scores_female.new $nnetdir/xvector_scores/sre10_10s_scores_female.target $nnetdir/xvector_scores/sre10_10s_scores_female.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_10s_scores_female.result
-
-  else
-      eer=$(paste $data/sre10_test_10s_$gender/trials $nnetdir/xvector_scores/sre10_10s_scores_$gender | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-      echo "EER: ${eer}%"
-
-    paste $data/sre10_test_10s_$gender/trials_$gender $nnetdir/xvector_scores/sre10_10s_scores_$gender | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new
-    grep ' target$' $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.target
-    grep ' nontarget$' $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget
-    cd ${KALDI_ROOT}/tools/det_score
-    comm=`echo "get_eer('$nnetdir/xvector_scores/sre10_10s_scores_${gender}.target', '$nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget', '$nnetdir/xvector_scores/sre10_10s_scores_${gender}.result')"`
-    echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-    cd -
-    # rm -f $nnetdir/xvector_scores/sre10_10s_scores_${gender}.new $nnetdir/xvector_scores/sre10_10s_scores_${gender}.target $nnetdir/xvector_scores/sre10_10s_scores_${gender}.nontarget
-    tail -n 1 $nnetdir/xvector_scores/sre10_10s_scores_${gender}.result
-  fi
-
-  exit 1
+  eval_plda_sre10.sh $gender $data $nnetdir
 fi
 
 if [ $stage -le 9 ]; then
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
     $nnetdir $data/sre16_major $nnetdir/xvectors_sre16_major
-
-  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
-    $nnetdir $data/sre16_minor $nnetdir/xvectors_sre16_minor
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false \
@@ -484,24 +370,25 @@ if [ $stage -le 9 ]; then
     $nnetdir $data/sre16_eval_test $nnetdir/xvectors_sre16_eval_test
 fi
 
+# PLDA scoring on SRE 2016
 if [ $stage -le 10 ]; then
   ### !!! Re-train LDA and PLDA models when it is referred again
   lda_dim=150
 
   $train_cmd $nnetdir/xvectors_sre16_major/log/compute_mean.log \
-    ivector-mean scp:$nnetdir/xvectors_sre16_major/xvector_sre16_major.scp \
+    ivector-mean scp:$nnetdir/xvectors_sre16_major/xvector.scp \
     $nnetdir/xvectors_sre16_major/mean.vec || exit 1;
 
   # This script uses LDA to decrease the dimensionality prior to PLDA.
   $train_cmd $nnetdir/xvectors_sre_combined/log/lda.log \
     ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector_sre_combined.scp ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector.scp ark:- |" \
     ark:$data/sre_combined/utt2spk $nnetdir/xvectors_sre_combined/transform.mat || exit 1;
 
   # Train an out-of-domain PLDA model.
   $train_cmd $nnetdir/xvectors_sre_combined/log/plda_lda${lda_dim}.log \
     ivector-compute-plda ark:$data/sre_combined/spk2utt \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector_sre_combined.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre_combined/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
     $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} || exit 1;
 
   # Here we adapt the out-of-domain PLDA model to SRE16 major, a pile
@@ -510,102 +397,85 @@ if [ $stage -le 10 ]; then
   $train_cmd $nnetdir/xvectors_sre16_major/log/plda_lda${lda_dim}_sre16_adapt.log \
     ivector-adapt-plda --within-covar-scale=0.75 --between-covar-scale=0.25 \
     $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} \
-    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre16_major/xvector_sre16_major.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean scp:$nnetdir/xvectors_sre16_major/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     $nnetdir/xvectors_sre16_major/plda_lda${lda_dim}_sre16_adapt || exit 1;
-
 
   # Get results using the out-of-domain PLDA model.
   $train_cmd $nnetdir/xvector_scores/log/sre16_eval.log \
     ivector-plda-scoring --normalize-length=true \
     --num-utts=ark:$nnetdir/xvectors_sre16_eval_enroll/num_utts.ark \
     "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_sre_combined/plda_lda${lda_dim} - |" \
-    "ark:ivector-mean ark:$data/sre16_eval_enroll/spk2utt scp:$nnetdir/xvectors_sre16_eval_enroll/xvector_sre16_eval_enroll.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec scp:$nnetdir/xvectors_sre16_eval_test/xvector_sre16_eval_test.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/sre16_eval_enroll/spk2utt scp:$nnetdir/xvectors_sre16_eval_enroll/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec scp:$nnetdir/xvectors_sre16_eval_test/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "cat '$sre16_trials' | cut -d\  --fields=1,2 |" $nnetdir/xvector_scores/sre16_eval_scores || exit 1;
-
-  utils/filter_scp.pl $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_scores > $nnetdir/xvector_scores/sre16_eval_tgl_scores
-  utils/filter_scp.pl $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_scores > $nnetdir/xvector_scores/sre16_eval_yue_scores
-  pooled_eer=$(paste $sre16_trials $nnetdir/xvector_scores/sre16_eval_scores | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  tgl_eer=$(paste $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_tgl_scores | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  yue_eer=$(paste $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_yue_scores | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  echo "Using Out-of-Domain PLDA, EER: Pooled ${pooled_eer}%, Tagalog ${tgl_eer}%, Cantonese ${yue_eer}%"
-
-
-  paste $sre16_trials $nnetdir/xvector_scores/sre16_eval_scores | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_scores.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_scores.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_scores.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_scores.target', '$nnetdir/xvector_scores/sre16_eval_scores.nontarget', '$nnetdir/xvector_scores/sre16_eval_scores.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_scores.new $nnetdir/xvector_scores/sre16_eval_scores.target $nnetdir/xvector_scores/sre16_eval_scores.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_scores.result
-
-  paste $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_tgl_scores | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_tgl_scores.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_tgl_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_tgl_scores.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_tgl_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_tgl_scores.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_tgl_scores.target', '$nnetdir/xvector_scores/sre16_eval_tgl_scores.nontarget', '$nnetdir/xvector_scores/sre16_eval_tgl_scores.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_tgl_scores.new $nnetdir/xvector_scores/sre16_eval_tgl_scores.target $nnetdir/xvector_scores/sre16_eval_tgl_scores.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_tgl_scores.result
-
-  paste $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_yue_scores | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_yue_scores.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_yue_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_yue_scores.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_yue_scores.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_yue_scores.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_yue_scores.target', '$nnetdir/xvector_scores/sre16_eval_yue_scores.nontarget', '$nnetdir/xvector_scores/sre16_eval_yue_scores.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_yue_scores.new $nnetdir/xvector_scores/sre16_eval_yue_scores.target $nnetdir/xvector_scores/sre16_eval_yue_scores.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_yue_scores.result
 
   # Get results using the adapted PLDA model.
   $train_cmd $nnetdir/xvector_scores/log/sre16_eval_scoring_adapt.log \
     ivector-plda-scoring --normalize-length=true \
     --num-utts=ark:$nnetdir/xvectors_sre16_eval_enroll/num_utts.ark \
     "ivector-copy-plda --smoothing=0.0 $nnetdir/xvectors_sre16_major/plda_lda${lda_dim}_sre16_adapt - |" \
-    "ark:ivector-mean ark:$data/sre16_eval_enroll/spk2utt scp:$nnetdir/xvectors_sre16_eval_enroll/xvector_sre16_eval_enroll.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec scp:$nnetdir/xvectors_sre16_eval_test/xvector_sre16_eval_test.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-mean ark:$data/sre16_eval_enroll/spk2utt scp:$nnetdir/xvectors_sre16_eval_enroll/xvector.scp ark:- | ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec ark:- ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
+    "ark:ivector-subtract-global-mean $nnetdir/xvectors_sre16_major/mean.vec scp:$nnetdir/xvectors_sre16_eval_test/xvector.scp ark:- | transform-vec $nnetdir/xvectors_sre_combined/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "cat '$sre16_trials' | cut -d\  --fields=1,2 |" $nnetdir/xvector_scores/sre16_eval_scores_adapt || exit 1;
 
-  utils/filter_scp.pl $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_scores_adapt > $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt
-  utils/filter_scp.pl $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_scores_adapt > $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt
-  pooled_eer=$(paste $sre16_trials $nnetdir/xvector_scores/sre16_eval_scores_adapt | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  tgl_eer=$(paste $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  yue_eer=$(paste $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt | awk '{print $6, $3}' | compute-eer - 2>/dev/null)
-  echo "Using Adapted PLDA, EER: Pooled ${pooled_eer}%, Tagalog ${tgl_eer}%, Cantonese ${yue_eer}%"
+  eval_plda_sre16.sh $gender $data $nnetdir
+  exit 1
+fi
 
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-4
+checkpoint='last'
 
-  paste $sre16_trials $nnetdir/xvector_scores/sre16_eval_scores_adapt | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_scores_adapt.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_scores_adapt.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_scores_adapt.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_scores_adapt.target', '$nnetdir/xvector_scores/sre16_eval_scores_adapt.nontarget', '$nnetdir/xvector_scores/sre16_eval_scores_adapt.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_scores_adapt.new $nnetdir/xvector_scores/sre16_eval_scores_adapt.target $nnetdir/xvector_scores/sre16_eval_scores_adapt.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_scores_adapt.result
+if [ $stage -le 11 ];then
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre10_enroll_coreext_c5_$gender $nnetdir/xvectors_sre10_enroll_coreext_c5_$gender
 
-  paste $sre16_trials_tgl $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.target', '$nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.nontarget', '$nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.new $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.target $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_tgl_scores_adapt.result
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre10_test_coreext_c5_$gender $nnetdir/xvectors_sre10_test_coreext_c5_$gender
 
-  paste $sre16_trials_yue $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt | awk '{print $6, $3}' > $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.new
-  grep ' target$' $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.target
-  grep ' nontarget$' $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.new | cut -d ' ' -f 1 > $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.nontarget
-  cd ${KALDI_ROOT}/tools/det_score
-  comm=`echo "get_eer('$nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.target', '$nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.nontarget', '$nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.result')"`
-  echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
-  cd -
-  # rm -f $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.new $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.target $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.nontarget
-  tail -n 1 $nnetdir/xvector_scores/sre16_eval_yue_scores_adapt.result
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre10_enroll_10s_$gender $nnetdir/xvectors_sre10_enroll_10s_$gender
+
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre10_test_10s_$gender $nnetdir/xvectors_sre10_test_10s_$gender
+
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre16_eval_enroll $nnetdir/xvectors_sre16_eval_enroll
+
+  nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    --chunk-size 10000 --normalize false \
+    $nnetdir $data/sre16_eval_test $nnetdir/xvectors_sre16_eval_test
+fi
+
+if [ $stage -le 12 ]; then
+  mkdir -p $nnetdir/xvector_scores
+
+  # Coreext C5
+  cat $data/sre10_test_coreext_c5_$gender/trials | awk '{print $1, $2}' | \
+    ivector-compute-dot-products - \
+      "ark:ivector-mean ark:$data/sre10_enroll_coreext_c5_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_coreext_c5_$gender/xvector.scp ark:- | ivector-normalize-length ark:- ark:- |" \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_sre10_test_coreext_c5_$gender/xvector.scp ark:- |" \
+      $nnetdir/xvector_scores/sre10_coreext_c5_scores_$gender.cos
+
+  # 10s-10s
+  cat $data/sre10_test_10s_$gender/trials | awk '{print $1, $2}' | \
+    ivector-compute-dot-products - \
+      "ark:ivector-mean ark:$data/sre10_enroll_10s_$gender/spk2utt scp:$nnetdir/xvectors_sre10_enroll_10s_$gender/xvector.scp ark:- | ivector-normalize-length ark:- ark:- |" \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_sre10_test_10s_$gender/xvector.scp ark:- |" \
+      $nnetdir/xvector_scores/sre10_10s_scores_$gender.cos
+
+  # SRE2016
+  cat $sre16_trials | awk '{print $1, $2}' | \
+    ivector-compute-dot-products - \
+      "ark:ivector-mean ark:$data/sre16_eval_enroll/spk2utt scp:$nnetdir/xvectors_sre16_eval_enroll/xvector.scp ark:- | ivector-normalize-length ark:- ark:- |" \
+      "ark:ivector-normalize-length scp:$nnetdir/xvectors_sre16_eval_test/xvector.scp ark:- |" \
+      $nnetdir/xvector_scores/sre16_eval_scores.cos
+
+  eval_cos.sh $gender $data $nnetdir
+  exit 1
 fi
 
