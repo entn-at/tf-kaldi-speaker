@@ -36,21 +36,23 @@ The pipeline is the same with Kaldi egs/sre10. For both SRE10 and SRE16, the res
 | ------- | ------- | ---- | ------------ | :------: | :--------: | :--------: | :------: | :--------: | :--------: |
 | Kaldi | Stat | Softmax | SRE04-SRE08 + SWBD | 1.68 | 0.0095 | 0.3764 | 8.95 | 0.0384 | 0.8671 |
 | TF/L2/LReLU/Att [3] | Att | Softmax | SRE04-08,12 + Mixer6 + Fisher + SWBD + VoxCeleb1&2 | - | - | - | 7.06 | - | - |
-| TDNN (ours) | Stat | Softmax | SRE04-SRE08 SWBD | 1.22 | 0.0071 | 0.3250 | 7.59 | 0.0325 | 0.8324 |
-| TDNN (ours) | Stat | ASoftmax (m=1) | SRE04-SRE08 SWBD | 1.35 | 0.0075 | 0.2976 | 7.82 | 0.0327 | 0.7867 |
-| TDNN (ours) | Stat | ASoftmax (m=2) | SRE04-SRE08 SWBD | 1.12 | 0.0065 | 0.2939 | 7.45 | 0.0314 | 0.7906 |
-| TDNN (ours) | Stat | ASoftmax (m=4) | SRE04-SRE08 SWBD | 1.03 | 0.0061 | 0.3072 | 7.46 | 0.0317 | 0.8067 |
-| TDNN (ours) | Stat | ArcSoftmax (m=0.15) | SRE04-SRE08 SWBD |
-| TDNN (ours) | Stat | ArcSoftmax (m=0.20) | SRE04-SRE08 SWBD |
-| TDNN (ours) | Stat | ArcSoftmax (m=0.25) | SRE04-SRE08 SWBD |
-| TDNN (ours) | Stat | ArcSoftmax (m=0.30) | SRE04-SRE08 SWBD |
-| TDNN (ours) | Stat | ArcSoftmax (m=0.35) | SRE04-SRE08 SWBD |
-| TDNN (ours) | Stat | AMSoftmax (m=0.10) | SRE04-SRE08 SWBD | 1.29 | 0.0068 | 0.2916 | 7.57 | 0.0315 | 0.7893 |
-| TDNN (ours) | Stat | AMSoftmax (m=0.15) | SRE04-SRE08 SWBD | 1.00 | 0.0060 | 0.2731 | 7.28 | 0.0306 | 0.7748 |
-| TDNN (ours) | Stat | AMSoftmax (m=0.20) | SRE04-SRE08 SWBD | 1.18 | 0.0066 | 0.3069 | 7.42 | 0.0309 | 0.8150 |
-| TDNN (ours) | Stat | AMSoftmax (m=0.25) | SRE04-SRE08 SWBD | 1.26 | 0.0076 | 0.3117 | 7.60 | 0.0317 | 0.7885 |
+| TDNN (ours) | Stat | Softmax | SRE04-SRE08 + SWBD | 1.22 | 0.0071 | 0.3250 | 7.59 | 0.0325 | 0.8324 |
+| TDNN (ours) | Stat | ASoftmax (m=1) | SRE04-SRE08 + SWBD | 1.35 | 0.0075 | 0.2976 | 7.82 | 0.0327 | 0.7867 |
+| TDNN (ours) | Stat | ASoftmax (m=2) | SRE04-SRE08 + SWBD | 1.12 | 0.0065 | 0.2939 | 7.45 | 0.0314 | 0.7906 |
+| TDNN (ours) | Stat | ASoftmax (m=4) | SRE04-SRE08 + SWBD | 1.03 | 0.0061 | 0.3072 | 7.46 | 0.0317 | 0.8067 |
+| TDNN (ours) | Stat | ArcSoftmax (m=0.15) | SRE04-SRE08 + SWBD |
+| TDNN (ours) | Stat | ArcSoftmax (m=0.20) | SRE04-SRE08 + SWBD |
+| TDNN (ours) | Stat | ArcSoftmax (m=0.25) | SRE04-SRE08 + SWBD |
+| TDNN (ours) | Stat | ArcSoftmax (m=0.30) | SRE04-SRE08 + SWBD |
+| TDNN (ours) | Stat | ArcSoftmax (m=0.35) | SRE04-SRE08 + SWBD |
+| TDNN (ours) | Stat | AMSoftmax (m=0.10) | SRE04-SRE08 + SWBD | 1.29 | 0.0068 | 0.2916 | 7.57 | 0.0315 | 0.7893 |
+| TDNN (ours) | Stat | AMSoftmax (m=0.15) | SRE04-SRE08 + SWBD | 1.00 | 0.0060 | 0.2731 | 7.28 | 0.0306 | 0.7748 |
+| TDNN (ours) | Stat | AMSoftmax (m=0.20) | SRE04-SRE08 + SWBD | 1.18 | 0.0066 | 0.3069 | 7.42 | 0.0309 | 0.8150 |
+| TDNN (ours) | Stat | AMSoftmax (m=0.25) | SRE04-SRE08 + SWBD | 1.26 | 0.0076 | 0.3117 | 7.60 | 0.0317 | 0.7885 |
 
 
 [1] Xie, W., Nagrani, A., Chung, J. S. & Zisserman, A., Utterance-level Aggregation For Speaker Recognition In The Wild. arXiv preprint arXiv:1902.10107 (2019)
+
 [2] Kaldi, egs/voxceleb/v2
+
 [3] Zeinali, H., Burget, L., Rohdin, J., Stafylakis, T. & Cernocky, J., How to Improve Your Speaker Embeddings Extractor in Generic Toolkits. arXiv preprint arXiv:1811.02066 (2018).
