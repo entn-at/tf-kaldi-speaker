@@ -136,6 +136,7 @@ egs/fisher/v2*
 egs/fisher/v3*
 
 # Unfinished
+egs/fisher/*
 egs/voxceleb/nnet/run_extract_mt_embeddings.sh
 egs/voxceleb/nnet/run_train_mt_nnet.sh
 egs/voxceleb/nnet/wrap/extract_mt_phone_wrapper.sh

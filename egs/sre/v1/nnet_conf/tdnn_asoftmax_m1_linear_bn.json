@@ -15,7 +15,7 @@
   "pooling_type": "statistics_pooling",
   "embedding_node": "tdnn6_dense",
 
-  "learning_rate": "nnet_conf/learning_rate_decay_60",
+  "learning_rate": 0.001,
   "optimizer": "momentum",
   "momentum": 0.9,
   "use_nesterov": false,
@@ -24,7 +24,7 @@
   "weight_l2_regularizer": 1e-2,
   "batchnorm_momentum": 0.99,
 
-  "num_epochs": 60,
+  "num_epochs": 200,
   "num_steps_per_epoch": 60000,
   "reduce_lr_epochs": 4,
   "show_training_progress": 200,

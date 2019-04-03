@@ -2,9 +2,9 @@
 # Copyright      2017   David Snyder
 #                2017   Johns Hopkins University (Author: Daniel Garcia-Romero)
 #                2017   Johns Hopkins University (Author: Daniel Povey)
+#                2019   Yi Liu. Modified to support network training using TensorFlow
 # Apache 2.0.
 #
-#                2018   Yi Liu. Modified to support network training using TensorFlow
 #
 # See README.txt for more info on data required.
 # Results (mostly EERs) are inline in comments below.
@@ -50,7 +50,7 @@ musan=/mnt/lv10/person/liuyi/ly_database/musan/
 # The kaldi sre egs directory
 kaldi_sre=/home/heliang05/liuyi/software/kaldi_gpu/egs/sre16
 
-stage=6
+stage=0
 
 if [ $stage -le -1 ]; then
     # link the directories
@@ -261,170 +261,91 @@ if [ $stage -le 6 ]; then
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
+#
 #  # Train asoftmax network
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_fn20
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_fn20.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_fn30
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_fn30.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
 #  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn_fn20
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn_fn20.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn_fn30
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn_fn30.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_fn20
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_fn20.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_fn30
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_fn30.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_fn20
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_fn20.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_fn30
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_fn30.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_1e-2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_1e-2.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_l5_1e-2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_l5_1e-2.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m2_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m2_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
-#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m2_linear_bn_l5_1e-2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m2_linear_bn_l5_1e-2.json \
+#
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
+#
+#  # AMSoftmax
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.10_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.10_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.15_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.15_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.20_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.25_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.25_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.30_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.30_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.35_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.35_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.45_linear_bn_1e-2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.45_linear_bn_1e-2.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.10_linear_bn_1e-2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.10_linear_bn_1e-2.json \
-#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-#    $nnetdir
+  # ArcSoftmax
+  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.10_linear_bn_1e-2
+  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.10_linear_bn_1e-2.json \
+    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+    $nnetdir
 
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.15_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.15_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.20_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.20_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-
-  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.25_linear_bn_1e-2
-  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.25_linear_bn_1e-2.json \
-    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-    $nnetdir
-
+#
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.25_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.25_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+#
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.30_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.30_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \

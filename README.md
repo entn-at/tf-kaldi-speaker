@@ -9,10 +9,8 @@ Compared with Kaldi nnet3, the modification of the network (e.g. adding attentio
 Adding other features to support text-dependent speaker verification is also possible.
 
 The purpose of the project is to make researches on neural network based speaker verification easier.
-I also try to reproduce the results in my papers.
+I also try to reproduce some results in my papers.
 
-I started to develop this code when I was in Cambridge University Engineering Department (CUED) working with Prof. Mark Gales.
-And I continue the development after I came back to Tsinghua University. My supervisor is Prof. Jia Liu and I'm also working with Dr. Liang He.
 
 # Requirement
 
@@ -59,59 +57,63 @@ Again, the backend classifier is integrated using Kaldi.
 * Examples including VoxCeleb and SRE. Refer to Fisher to customized the dataset.
 * Standard x-vector architecture (with minor modification).
 * Angular softmax, additive margin softmax, additive angular margin softmax, triplet loss and other loss functions.
-* Self attention and other attention methods (e.g. linguistic attention in text-dependent case) (*Still testing*).
-* I'm now working on multi-task and text-dependent training. Hopefully they can be done in a few months.
+* Self attention and other attention methods (*testing*).
+* I'm now working on multitask learning.
 
 # Usage
- * The demos for SRE and VoxCeleb 1&2 are included in egs/{sre,voxceleb}. Follow `run.sh` to go through the code.
- * The neural networks are configured using JSON files which are included in nnet_conf and the parameters are exhibited in the demos.
+ * The demos for SRE and VoxCeleb are included in egs/{sre,voxceleb}. Follow `run.sh` to go through the code.
+ * The neural networks are configured using JSON files which are included in nnet_conf and the usage of the parameters is exhibited in the demos.
 
 # Performance & Speed
 
-I've test the code on three datasets and the results are better than the standard Kaldi recipe.
-Yes, you can achieve better performance using Kaldi by carefully tuning the parameters.
-But for me, I found the parameter tuning is easier using this code, especially the number of the training epochs since Kaldi ask you to decide the epochs beforehand and you cannot change the number since it generate the training examples first.
+* Performance
 
-Since it only support single gpu, the speed is not very fast but acceptable in medium-scale datasets.
-For VoxCeleb, the training takes about 2.5 days using Nvidia P100 and it takes 4 days for SRE.
+    I've test the code on three datasets and the results are better than the standard Kaldi recipe. (Of course, you can achieve better performance using Kaldi by carefully tuning the parameters.)
 
-The speed could be much faster if multi-GPUs are used. I think the multi-GPU support is not too difficult. Just add the towers and average the gradients can achieve that. The only obstacle is I don't have enough time to do that...
+    See [RESULTS](./RESULTS.md) for details.
+
+* Speed
+
+    Since it only support single gpu, the speed is not very fast but acceptable in medium-scale datasets.
+    For VoxCeleb, the training takes about 2.5 days using Nvidia P100 and it takes ~4 days for SRE.
+
+    The speed could be much faster if multi-GPUs are used. The multi-GPU support is not too difficult. Adding gradient towers can achieve that.
+
 
 # Pros and cons
 
 * Advantages
     1. Performance: The performance of our code is shown to perform better than Kaldi.
-    2. Storage: There is no need to generate a *packed* egs as Kaldi to train the network. The training will load the data on the fly.
-    3. Flexibility: Change the network architecture is pretty easy.
+    2. Storage: There is no need to generate a *packed* egs as Kaldi when training the network. The training will load the data on the fly.
+    3. Flexibility: Changing the network architecture and loss function is pretty easy.
+
 * Disadvantages
-    1. Training speed: Only support single GPU at this moment. Multiple GPU can be achieved by using data parallel and tower training.
-    2. Since no packed egs are generated. Multiple CPUs must be used to load the data simultaneously. This may become a shortcoming if the utterances are very long. You have to assign enough CPUs to make the loading speech fast enough and match the GPU processing speed.
+    1. Training speed: Only support single GPU at this moment. Multiple GPU can be achieved by using data parallelism and tower-based training.
+    2. Since no packed egs are generated. Multiple CPUs must be used to load the data during training.
+    This is a overhead when the utterances are very long. You have to assign enough CPUs to make the loading speech fast enough to match the GPU processing speed.
 
 # Other discussions
 
-* I'm not sure what the best learning rate decay strategy. In this code, I provide two possible methods: using validation set and using fixed file.
-The first method works well but it may take longer to train the network. The small learning rate (e.g. 1e-5) can still improve the performance while I think the learning rate decay can be faster when the learning rate is small enough.
+* In this code, I provide two possible methods to tune the learning rate when SGD is used: using validation set and using fixed file.
+The first method works well but it may take longer to train the network.
 
-* David Snyder and Dan Povey just released a new paper about the diarization performance using x-vector. The network in that paper is updated to more than 10 layer. You can simply change `tdnn.py` to implement the new network.
-I haven't done anything to find the best network architecture. Deeper network is worth trying since we have thousands of training utterances.
+* David Snyder and Dan Povey just released a new paper about the diarization performance using x-vector. The network in that paper is updated to more than 10 layers.
+You may like to change `model/tdnn.py` to implement the new network.
+Resnet is also used in many works. I haven't done anything to find the best network architecture.
+Deeper network is worth trying since we have enough training data.
 
 # License
 
-**Apache License, Version 2.0 (Refer to LICENCE)**
+**Apache License, Version 2.0 (Refer to [LICENCE](./LICENSE))**
 
 # Acknowledgements
 
-Thanks to:
+The computational resources are mainly supported by Dr. Liang He.
 
-* kaldi-io-for-python: Python functions for reading kaldi data formats. Useful for rapid prototyping with python.
-
-    <https://github.com/vesis84/kaldi-io-for-python>
-
-* The computation resources are provided by Prof. Gales, Prof. Liu and Dr. He.
 
 # Last ...
 
-* UNFORTUNATELY, the code is developed under Windows. The file property cannot be maintained properly.
+* Unfortunately, the code is developed under Windows. The file property cannot be maintained properly.
 After downloading the code, simply run:
     ```
     find ./ -name "*.sh" | awk '{print "chmod +x "$1}' | sh
@@ -122,7 +124,7 @@ After downloading the code, simply run:
     In my case, the program is run locally.
     Modify cmd.sh and path.sh just according to standard Kaldi setup.
 
-* If you encounter any problems or have any suggestions, please make an issue.
+* If you encounter any problems, please make an issue.
 
 * If you have any extensions, feel free to create a PR.
 
@@ -135,6 +137,6 @@ After downloading the code, simply run:
     E-mail: liu-yi15 (at) mails (dot) tsinghua (dot) edu (dot) cn
 
 
-# Please cite
+# Related papers
 
 I'm working on a paper describing the performance using this library. Will update soon.

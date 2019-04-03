@@ -1,9 +1,12 @@
 # Changelog
 
-## [Todo]
-- Attention using linguistic features.
+## [TODO]
+- Train on VoxCeleb 2 dev set and test on VoxCeleb 1.
+- Test attention component.
+- Other pooling strategy. (Utterance-level Aggregation For Speaker Recognition In The Wild)
+- Add multitask learning.
+
 
 ## [First version]
 - Basic x-vector pipeline.
-- Different loss functions.
-- Self attention mechanism.
+- Large margin softmax loss.
