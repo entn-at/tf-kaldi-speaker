@@ -8,7 +8,7 @@ from model.common import l2_scaling
 from model.tdnn import tdnn
 from model.loss import softmax
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
-from model.loss import semihard_triplet_loss, angular_triplet_loss
+from model.loss import semihard_triplet_loss, angular_triplet_loss, e2e_valid_loss, generalized_angular_triplet_loss
 from dataset.data_loader import KaldiDataRandomQueue, KaldiDataSeqQueue, DataOutOfRange
 from misc.utils import substring_in_list, activation_summaries
 from six.moves import range
@@ -71,6 +71,7 @@ class Trainer(object):
 
         # The output predictions. Useful in the prediction mode.
         self.embeddings = None
+        self.endpoints = None
 
         # The optimizer used in the training.
         # The total loss is useful if we want to change the gradient or variables to optimize (e.g. in fine-tuning)
@@ -101,9 +102,9 @@ class Trainer(object):
         self.is_loaded = False
 
         # In train, valid and prediction modes, we need the inputs. If tf.data is used, the input can be a node in
-        # the graph. However, we may also use feed_dict mechanism to feed data, in which case the placeholder is palced
+        # the graph. However, we may also use feed_dict mechanism to feed data, in which case the placeholder is placed
         # in the graph.
-        # Now we define the placeholder in the build rountine.
+        # Now we define the placeholder in the build routines.
         self.train_features = None
         self.train_labels = None
         self.valid_features = None
@@ -186,7 +187,7 @@ class Trainer(object):
 
         return features, endpoints
 
-    def build(self, mode, dim, loss_type=None, num_speakers=None):
+    def build(self, mode, dim, loss_type=None, num_speakers=None, noupdate_var_list=None):
         """ Build a network.
 
         Currently, I use placeholder in the graph and feed data during sess.run. So no need to parse
@@ -197,6 +198,9 @@ class Trainer(object):
             dim: The dimension of the feature.
             loss_type: Which loss function do we use. Could be None when mode == predict
             num_speakers: The total number of speakers. Used in softmax-like network
+            noupdate_var_list: In the fine-tuning, some variables are fixed. The list contains their names (or part of their names).
+                               We use `noupdate` rather than `notrain` because some variables are not trainable, e.g.
+                               the mean and var in the batchnorm layers.
         """
         assert(mode == "train" or mode == "valid" or mode == "predict")
         is_training = (mode == "train")
@@ -240,6 +244,8 @@ class Trainer(object):
             self.loss_network = semihard_triplet_loss
         elif loss_type == "angular_triplet_loss":
             self.loss_network = angular_triplet_loss
+        elif loss_type == "generalized_angular_triplet_loss":
+            self.loss_network = generalized_angular_triplet_loss
         else:
             raise NotImplementedError("Not implement %s loss" % self.loss_type)
 
@@ -264,20 +270,23 @@ class Trainer(object):
                     train_margin = self.params.arcsoftmax_m
                     self.params.arcsoftmax_m = 0
                 elif loss_type == "angular_triplet_loss":
-                    train_margin = self.params.margin
-                    train_triplet_type = self.params.triplet_type
-                    train_loss_type = self.params.loss_type
-
-                    # Set the additive margin. All sampling.
-                    # Since 2.0 > cos(theta_p) - cos(theta_n), when margin = 2.0, every triplet counts.
-                    self.params.margin = 2.0
-                    self.params.triplet_type = "all"
-                    self.params.loss_type = "additive_margin_softmax"
+                    # Switch loss to e2e_valid_loss
+                    train_loss_network = self.loss_network
+                    self.loss_network = e2e_valid_loss
                 else:
                     pass
 
+                if "aux_loss_func" in self.params.dict:
+                    # No auxiliary losses during validation.
+                    train_aux_loss_func = self.params.aux_loss_func
+                    self.params.aux_loss_func = []
+
                 features, endpoints = self.entire_network(self.valid_features, self.params, is_training, reuse_variables)
-                valid_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
+                valid_loss, endpoints_loss = self.loss_network(features, self.valid_labels, num_speakers, self.params, is_training, reuse_variables)
+                endpoints.update(endpoints_loss)
+
+                if "aux_loss_func" in self.params.dict:
+                    self.params.aux_loss_func = train_aux_loss_func
 
                 # Change the margin back!!!
                 if loss_type == "softmax":
@@ -289,9 +298,7 @@ class Trainer(object):
                 elif loss_type == "additive_angular_margin_softmax":
                     self.params.arcsoftmax_m = train_margin
                 elif loss_type == "angular_triplet_loss":
-                    self.params.margin = train_margin
-                    self.params.triplet_type = train_triplet_type
-                    self.params.loss_type = train_loss_type
+                    self.loss_network = train_loss_network
                 else:
                     pass
 
@@ -299,6 +306,7 @@ class Trainer(object):
                 # We may also need to check other values expect for the loss. Leave the task to other functions.
                 # During validation, I compute the cosine EER for the final output of the network.
                 self.embeddings = endpoints["output"]
+                self.endpoints = endpoints
 
                 self.valid_ops["raw_valid_loss"] = valid_loss
                 mean_valid_loss, mean_valid_loss_op = tf.metrics.mean(valid_loss)
@@ -342,7 +350,10 @@ class Trainer(object):
         # There is a copy in `set_trainable_variables`
         with tf.name_scope("train") as scope:
             features, endpoints = self.entire_network(self.train_features, self.params, is_training, reuse_variables)
-            loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
+            loss, endpoints_loss = self.loss_network(features, self.train_labels, num_speakers, self.params, is_training, reuse_variables)
+            self.endpoints = endpoints
+
+            endpoints.update(endpoints_loss)
             regularization_loss = tf.losses.get_regularization_loss()
             total_loss = loss + regularization_loss
 
@@ -365,8 +376,31 @@ class Trainer(object):
             self.train_summary.append(tf.summary.scalar("learning_rate", self.learning_rate))
 
             # The gradient ops is inside the scope to support multi-gpus
-            batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
-            grads = opt.compute_gradients(total_loss)
+            if noupdate_var_list is not None:
+                old_batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
+                batchnorm_update_ops = []
+                for op in old_batchnorm_update_ops:
+                    if not substring_in_list(op.name, noupdate_var_list):
+                        batchnorm_update_ops.append(op)
+                        tf.logging.info("[Info] Update %s" % op.name)
+                    else:
+                        tf.logging.info("[Info] Op %s will not be executed" % op.name)
+            else:
+                batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
+
+            if noupdate_var_list is not None:
+                variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+                train_var_list = []
+
+                for v in variables:
+                    if not substring_in_list(v.name, noupdate_var_list):
+                        train_var_list.append(v)
+                        tf.logging.info("[Info] Train %s" % v.name)
+                    else:
+                        tf.logging.info("[Info] Var %s will not be updated" % v.name)
+                grads = opt.compute_gradients(total_loss, var_list=train_var_list)
+            else:
+                grads = opt.compute_gradients(total_loss)
 
             # Once the model has been built (even for a tower), we set the flag
             self.is_built = True
@@ -384,6 +418,8 @@ class Trainer(object):
                 for var in vars[-2:]:
                     assert("w" in var.name or "b" in var.name)
             grads = zip(grads_clip, vars)
+
+        # There are some things we can do to the gradients, i.e. learning rate scaling.
 
         # # The values and gradients are added to summeries
         # for grad, var in grads:
@@ -526,6 +562,7 @@ class Trainer(object):
             try:
                 if step % tune_period == 0:
                     train_ops = [self.train_ops, self.train_op, self.train_summary]
+                    # train_ops = [self.train_ops, self.train_op]
                     start_time = time.time()
                     features, labels = data_loader.fetch()
                     train_val = self.sess.run(train_ops, feed_dict={self.train_features: features,
@@ -581,7 +618,6 @@ class Trainer(object):
         else:
             tf.logging.info("[Warning] Cannot find model in %s. Random initialization is used in validation." % self.model)
 
-        valid_ops = [self.valid_ops, self.valid_summary]
         embeddings_val = None
         labels_val = None
         num_batches = 0
@@ -597,25 +633,24 @@ class Trainer(object):
                                             shuffle=False)
             data_loader.start()
 
+            tf.logging.info("Generate valid embeddings.")
             # In this mode, the embeddings and labels will be saved and output. It needs more memory and takes longer
             # to process these values.
-            valid_ops_emb = valid_ops + [self.embeddings, self.valid_labels]
             while True:
                 try:
                     if num_batches % 100 == 0:
                         tf.logging.info("valid step: %d" % num_batches)
                     features, labels = data_loader.fetch()
-                    valid_val = self.sess.run(valid_ops_emb, feed_dict={self.valid_features: features,
-                                                                    self.valid_labels: labels,
-                                                                    self.global_step: curr_step})
+                    valid_emb_val, valid_labels_val = self.sess.run([self.embeddings, self.valid_labels], feed_dict={self.valid_features: features,
+                                                                                                                     self.valid_labels: labels,
+                                                                                                                     self.global_step: curr_step})
                     # Save the embeddings and labels
                     if embeddings_val is None:
-                        embeddings_val = valid_val[-2]
-                        labels_val = valid_val[-1]
+                        embeddings_val = valid_emb_val
+                        labels_val = valid_labels_val
                     else:
-                        embeddings_val = np.concatenate((embeddings_val, valid_val[-2]), axis=0)
-                        labels_val = np.concatenate((labels_val, valid_val[-1]), axis=0)
-                    loss = valid_val[0]["valid_loss"]
+                        embeddings_val = np.concatenate((embeddings_val, valid_emb_val), axis=0)
+                        labels_val = np.concatenate((labels_val, valid_labels_val), axis=0)
                     num_batches += 1
                 except DataOutOfRange:
                     break
@@ -630,11 +665,16 @@ class Trainer(object):
                                             max_len=self.params.max_segment_len,
                                             shuffle=True)
         elif batch_type == "end2end":
+            # The num_valid_speakers_per_batch and num_valid_segments_per_speaker are only required when
+            # End2End loss is used. Since we switch the loss function to softmax generalized e2e loss
+            # when the e2e loss is used.
+            assert "num_valid_speakers_per_batch" in self.params.dict and "num_valid_segments_per_speaker" in self.params.dict, \
+                "Valid parameters should be set if E2E loss is selected"
             data_loader = KaldiDataRandomQueue(data, spklist,
                                                num_parallel=2,
                                                max_qsize=10,
-                                               num_speakers=self.params.num_speakers_per_batch,
-                                               num_segments=self.params.num_segments_per_speaker,
+                                               num_speakers=self.params.num_valid_speakers_per_batch,
+                                               num_segments=self.params.num_valid_segments_per_speaker,
                                                min_len=self.params.min_segment_len,
                                                max_len=self.params.max_segment_len,
                                                shuffle=True)
@@ -642,22 +682,23 @@ class Trainer(object):
             raise ValueError
 
         data_loader.start()
+        num_batches = 0
         for _ in range(self.params.valid_max_iterations):
             try:
                 if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
                 features, labels = data_loader.fetch()
-                valid_val = self.sess.run(valid_ops, feed_dict={self.valid_features: features,
-                                                                self.valid_labels: labels,
-                                                                self.global_step: curr_step})
-                loss = valid_val[0]["valid_loss"]
+                _ = self.sess.run(self.valid_ops["valid_loss_op"], feed_dict={self.valid_features: features,
+                                                                                      self.valid_labels: labels,
+                                                                                      self.global_step: curr_step})
                 num_batches += 1
             except DataOutOfRange:
                 break
         data_loader.stop()
 
+        loss, summary = self.sess.run([self.valid_ops["valid_loss"], self.valid_summary])
         # We only save the summary for the last batch.
-        self.valid_summary_writer.add_summary(valid_val[1], curr_step)
+        self.valid_summary_writer.add_summary(summary, curr_step)
         # The valid loss is averaged over all the batches.
         tf.logging.info("[Validation %d batches] valid loss: %f" % (num_batches, loss))
 
@@ -777,3 +818,89 @@ class Trainer(object):
         self.save(0)
         return
 
+    def insight(self, data, spklist, batch_type="softmax", output_embeddings=False, aux_data=None):
+        """Just use to debug the network
+        """
+        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.local_variables_initializer())
+        assert batch_type == "softmax" or batch_type == "end2end", "The batch_type can only be softmax or end2end"
+
+        embeddings_val = None
+        labels_val = None
+
+        self.load()
+
+        if output_embeddings:
+            # If we want to output embeddings, the features should be loaded in order
+            data_loader = KaldiDataSeqQueue(data, spklist,
+                                            num_parallel=2,
+                                            max_qsize=10,
+                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
+                                            min_len=self.params.min_segment_len,
+                                            max_len=self.params.max_segment_len,
+                                            shuffle=False)
+            data_loader.start()
+
+            tf.logging.info("Generate valid embeddings.")
+            # In this mode, the embeddings and labels will be saved and output. It needs more memory and takes longer
+            # to process these values.
+            while True:
+                try:
+                    features, labels = data_loader.fetch()
+                    valid_emb_val, valid_labels_val = self.sess.run([self.embeddings, self.valid_labels], feed_dict={self.valid_features: features,
+                                                                                                                     self.valid_labels: labels})
+                    # Save the embeddings and labels
+                    if embeddings_val is None:
+                        embeddings_val = valid_emb_val
+                        labels_val = valid_labels_val
+                    else:
+                        embeddings_val = np.concatenate((embeddings_val, valid_emb_val), axis=0)
+                        labels_val = np.concatenate((labels_val, valid_labels_val), axis=0)
+                except DataOutOfRange:
+                    break
+            data_loader.stop()
+
+        if batch_type == "softmax":
+            data_loader = KaldiDataSeqQueue(data, spklist,
+                                            num_parallel=2,
+                                            max_qsize=10,
+                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
+                                            min_len=50,
+                                            max_len=100,
+                                            shuffle=True)
+        elif batch_type == "end2end":
+            # The num_valid_speakers_per_batch and num_valid_segments_per_speaker are only required when
+            # End2End loss is used. Since we switch the loss function to softmax generalized e2e loss
+            # when the e2e loss is used.
+            assert "num_valid_speakers_per_batch" in self.params.dict and "num_valid_segments_per_speaker" in self.params.dict, \
+                "Valid parameters should be set if E2E loss is selected"
+            data_loader = KaldiDataRandomQueue(data, spklist,
+                                               num_parallel=2,
+                                               max_qsize=10,
+                                               num_speakers=self.params.num_valid_speakers_per_batch,
+                                               num_segments=self.params.num_valid_segments_per_speaker,
+                                               min_len=self.params.min_segment_len,
+                                               max_len=self.params.max_segment_len,
+                                               shuffle=True)
+        else:
+            raise ValueError
+
+        data_loader.start()
+        while True:
+            try:
+                features, labels = data_loader.fetch()
+                _, endpoints_val = self.sess.run([self.valid_ops["valid_loss_op"], self.endpoints], feed_dict={self.valid_features: features,
+                                                                                                                 self.valid_labels: labels})
+            except DataOutOfRange:
+                break
+        data_loader.stop()
+        loss = self.sess.run(self.valid_ops["valid_loss"])
+        tf.logging.info("Shorter segments are used to test the valid loss (50-100)")
+        tf.logging.info("Loss: %f" % loss)
+        from model.test_utils import softmax
+        with tf.variable_scope("softmax", reuse=True):
+            test = tf.get_variable("output/kernel")
+            test_val = self.sess.run(test)
+        import pdb
+        pdb.set_trace()
+        return loss, embeddings_val, labels_val

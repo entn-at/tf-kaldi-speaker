@@ -1,4 +1,8 @@
 import json
+from sklearn import metrics
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
+import numpy as np
 import tensorflow as tf
 from distutils.dir_util import copy_tree
 import os
@@ -87,15 +91,19 @@ def save_codes_and_config(cont, model, config):
                 tf.logging.warn("The dir %s exisits. Delete it and continue." % os.path.join(model, ".backup"))
                 shutil.rmtree(os.path.join(model, ".backup"))
             os.makedirs(os.path.join(model, ".backup"))
-            shutil.move(os.path.join(model, "codes"), os.path.join(model, ".backup/"))
-            shutil.move(os.path.join(model, "nnet"), os.path.join(model, ".backup/"))
+            if os.path.exists(os.path.join(model, "codes")):
+                shutil.move(os.path.join(model, "codes"), os.path.join(model, ".backup/"))
+            if os.path.exists(os.path.join(model, "nnet")):
+                shutil.move(os.path.join(model, "nnet"), os.path.join(model, ".backup/"))
 
         # `model/codes` is used to save the codes and `model/nnet` is used to save the model and configuration
+        if os.path.isdir(os.path.join(model, "codes")):
+            shutil.rmtree(os.path.join(model, "codes"))
         os.makedirs(os.path.join(model, "codes"))
 
         # We need to set the home directory of the tf-kaldi-speaker (TF_KALDI_ROOT).
         if not os.environ.get('TF_KALDI_ROOT'):
-            tf.logging.error("TF_KALDI_ROOT should be set before training.")
+            tf.logging.error("TF_KALDI_ROOT should be set before training. Refer to path.sh to set the value manually. ")
             quit()
         copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "dataset"), os.path.join(model, "codes/dataset/"))
         copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "model"), os.path.join(model, "codes/model/"))
@@ -265,10 +273,6 @@ def compute_cos_pairwise_eer(embeddings, labels, max_num_embeddings=1000):
         max_num_embeddings: The max number of embeddings to compute the EER.
     :return: The pairwise EER.
     """
-    from sklearn import metrics
-    from scipy.optimize import brentq
-    from scipy.interpolate import interp1d
-    import numpy as np
     embeddings /= np.sqrt(np.sum(embeddings ** 2, axis=1, keepdims=True) + 1e-12)
     num_embeddings = embeddings.shape[0]
     if num_embeddings > max_num_embeddings:
@@ -335,3 +339,21 @@ def activation_summaries(endpoints):
     return tf.summary.merge(sum)
 
 
+def remove_params_prefix(params, prefix):
+    new_params = ParamsPlain()
+    prefix += '_'
+    l = len(prefix)
+    for key in params.dict:
+        new_key = key
+        if key[:l] == prefix:
+            new_key = key[l:]
+        new_params.dict[new_key] = params.dict[key]
+    return new_params
+
+
+def add_dict_prefix(d, prefix):
+    new_d = {}
+    for key in d:
+        new_key = prefix + "_" + key
+        new_d[new_key] = d[key]
+    return new_d

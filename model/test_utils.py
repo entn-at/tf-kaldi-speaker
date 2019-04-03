@@ -467,7 +467,7 @@ def asoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
     num_data = features.shape[0]
     loss_matrix = np.zeros((num_data, num_data, num_data))
     total_loss = np.zeros((num_data, 1))
-    eps = 1e-16
+    eps = 1e-12
 
     if triplet_type == "all":
         for i in range(num_data):
@@ -522,19 +522,19 @@ def amsoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
     num_data = features.shape[0]
     loss_matrix = np.zeros((num_data, num_data, num_data))
     total_loss = np.zeros((num_data, 1))
-    eps = 1e-16
+    eps = 1e-12
 
     if triplet_type == "all":
         for i in range(num_data):
             for j in range(num_data):
                 if i == j or labels[i] != labels[j]:
                     continue
-                pos = angular_triplet_proc_positive(sim[i, j], margin, "amsoftmax")
+                # pos = angular_triplet_proc_positive(sim[i, j], margin, "amsoftmax")
                 for k in range(num_data):
                     if labels[i] == labels[k]:
                         continue
-                    neg = angular_triplet_proc_negative(sim[i, k], "amsoftmax")
-                    one_loss = neg - pos
+                    # neg = angular_triplet_proc_negative(sim[i, k], "amsoftmax")
+                    one_loss = sim[i, k] - sim[i, j] + margin
                     loss += np.maximum(one_loss, 0.0)
                     loss_matrix[i, j, k] = np.maximum(one_loss, 0.0)
                     if one_loss > eps:
@@ -577,7 +577,7 @@ def arcsoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
     num_data = features.shape[0]
     loss_matrix = np.zeros((num_data, num_data, num_data))
     total_loss = np.zeros((num_data, 1))
-    eps = 1e-16
+    eps = 1e-12
 
     if triplet_type == "all":
         for i in range(num_data):
@@ -614,3 +614,237 @@ def arcsoftmax_angular_triplet_loss(features, labels, margin, triplet_type):
             total_loss[i] = np.maximum(max_neg - min_pos, 0.0)
             num_triplets += 1
     return loss / num_triplets
+
+
+def compute_generalized_triplet_loss(features, w, labels, params, num_classes):
+    feature_norm = np.sqrt(np.sum(features ** 2, axis=1, keepdims=True))
+    eps = 1e-12
+
+    w_update = w
+    if params.triplet_center == "average":
+        # Update the centers w
+        # w_norm = np.sqrt(np.sum(w ** 2, axis=0, keepdims=True))
+        # w_new = w / w_norm
+        # for i in range(features.shape[0]):
+        #     w_new[:, labels[i]] -= (w_new[:, labels[i]] - np.transpose(features[i, :])) * (
+        #             1 - params.triplet_center_momentum)
+        # w = w_new
+        # w_update = w_new
+        w_new = w
+        for i in range(features.shape[0]):
+            w_new[:, labels[i]] -= (w_new[:, labels[i]] - np.transpose(features[i, :])) * (
+                    1 - params.triplet_center_momentum)
+            w = w_new
+            w_update = w_new
+
+    features = features / feature_norm
+    w_norm = np.sqrt(np.sum(w ** 2, axis=0, keepdims=True))
+    w = w / w_norm
+    cos_theta = np.dot(features, w)
+    dist = np.zeros((features.shape[0], w.shape[1]))
+    for i in range(features.shape[0]):
+        for j in range(w.shape[1]):
+            dist[i, j] = np.sum(np.square(features[i, :] - w[:, j]))
+
+    loss = {}
+    if params.loss_compute == "raw":
+        if params.triplet_topn == 1:
+            target_dist = np.zeros((features.shape[0], 1))
+            nontarget_dist = np.zeros((features.shape[0], 1))
+            for i in range(features.shape[0]):
+                min_nontarget_dist = 1e8
+                for j in range(num_classes):
+                    if j == labels[i]:
+                        target_dist[i] = dist[i, j]
+                    else:
+                        if dist[i, j] < min_nontarget_dist:
+                            min_nontarget_dist = dist[i, j]
+                nontarget_dist[i] = min_nontarget_dist
+
+            l = 0
+            n = 0
+            for i in range(target_dist.shape[0]):
+                if target_dist[i] > params.target_margin and params.margin + target_dist[i] - nontarget_dist[i] > eps:
+                    n += 1
+                    l += params.margin + target_dist[i] - nontarget_dist[i]
+            loss["triplet_loss"] = l / (n + eps)
+        elif params.triplet_topn == 0:
+            target_dist = np.zeros((features.shape[0], 1))
+            nontarget_dist = np.zeros((features.shape[0], num_classes - 1))
+            for i in range(features.shape[0]):
+                nontarget_index = 0
+                for j in range(num_classes):
+                    if j == labels[i]:
+                        target_dist[i] = dist[i, j]
+                    else:
+                        nontarget_dist[i, nontarget_index] = dist[i, j]
+                        nontarget_index += 1
+            l = 0
+            n = 0
+            for i in range(features.shape[0]):
+                if target_dist[i] > params.target_margin:
+                    for j in range(num_classes - 1):
+                        if target_dist[i] - nontarget_dist[i, j] + params.margin > eps:
+                            l += params.margin + target_dist[i] - nontarget_dist[i, j]
+                            n += 1
+            loss["triplet_loss"] = l / (n + eps)
+        else:
+            target_dist = np.zeros((features.shape[0], 1))
+            for i in range(features.shape[0]):
+                target_dist[i] = dist[i, labels[i]]
+            for i in range(features.shape[0]):
+                dist[i, labels[i]] = 1e8
+            nontarget_dist = np.sort(dist)[:, :params.triplet_topn]
+
+            l = 0
+            n = 0
+            for i in range(features.shape[0]):
+                if target_dist[i] > params.target_margin:
+                    for j in range(nontarget_dist.shape[1]):
+                        if target_dist[i] - nontarget_dist[i, j] + params.margin > eps:
+                            l += params.margin + target_dist[i] - nontarget_dist[i, j]
+                            n += 1
+            loss["triplet_loss"] = l / (n + eps)
+
+        for i in range(features.shape[0]):
+            for j in range(w.shape[1]):
+                dist[i, j] = np.sum(np.square(features[i, :] - w[:, j]))
+        loss["center_loss"] = 0.0
+        n = 0
+        for i in range(features.shape[0]):
+            if dist[i, labels[i]] > params.target_margin:
+                loss["center_loss"] += dist[i, labels[i]]
+                n += 1
+        loss["center_loss"] /= n
+
+        loss["between_loss"] = 0.0
+        num_between = 0
+        for i in range(num_classes):
+            for j in range(num_classes):
+                if i == j:
+                    continue
+                loss["between_loss"] -= np.sum(np.square(w[:, i] - w[:, j]))
+                num_between += 1
+        loss["between_loss"] /= num_between
+
+        loss["l2_loss"] = 0.0
+        for i in range(w_update.shape[0]):
+            for j in range(w_update.shape[1]):
+                loss["l2_loss"] += w_update[i, j] ** 2
+        loss["l2_loss"] = np.sqrt(loss["l2_loss"])
+    else:
+        # if params.triplet_topn == 1:
+        #     # Find the hardest negative
+        #     target_cos = np.zeros((features.shape[0], 1))
+        #     nontarget_cos = np.zeros((features.shape[0], 1))
+        #     for i in range(features.shape[0]):
+        #         max_nontarget_cos = -1
+        #         for j in range(num_classes):
+        #             if j == labels[i]:
+        #                 target_cos[i] = cos_theta[i, j]
+        #             else:
+        #                 if cos_theta[i, j] > max_nontarget_cos:
+        #                     max_nontarget_cos = cos_theta[i, j]
+        #         nontarget_cos[i] = max_nontarget_cos
+        #     l = np.log(1 + np.exp(params.margin + nontarget_cos - target_cos))
+        #     if params.triplet_norm_hard:
+        #         loss["triplet_loss"] = np.sum(l) / np.sum(np.array(np.greater(params.margin + nontarget_cos - target_cos, eps), dtype=np.float) + eps)
+        #     else:
+        #         loss["triplet_loss"] = np.sum(l) / features.shape[0]
+        # elif params.triplet_topn == 0:
+        #     target_cos = np.zeros((features.shape[0], 1))
+        #     nontarget_cos = np.zeros((features.shape[0], num_classes - 1))
+        #     tmp_loss = np.zeros((features.shape[0], num_classes))
+        #     for i in range(features.shape[0]):
+        #         for j in range(num_classes):
+        #             tmp_loss[i, j] = np.log(1 + np.exp(cos_theta[i, j] - cos_theta[i, labels[i]]))
+        #     for i in range(features.shape[0]):
+        #         nontarget_index = 0
+        #         for j in range(num_classes):
+        #             if j == labels[i]:
+        #                 target_cos[i] = cos_theta[i, j]
+        #             else:
+        #                 nontarget_cos[i, nontarget_index] = cos_theta[i, j]
+        #                 nontarget_index += 1
+        #     loss["triplet_loss"] = 0
+        #     num_positive = 0
+        #     for i in range(features.shape[0]):
+        #         for j in range(num_classes - 1):
+        #             if nontarget_cos[i, j] - target_cos[i] + params.margin > eps:
+        #                 loss["triplet_loss"] += np.log(1 + np.exp(params.margin + nontarget_cos[i, j] - target_cos[i]))
+        #                 num_positive += 1
+        #     if params.triplet_norm_hard:
+        #         loss["triplet_loss"] /= (num_positive + 1e-16)
+        #     else:
+        #         loss["triplet_loss"] /= (features.shape[0] * (num_classes - 1))
+        #     loss["num_positives"] = num_positive
+        # else:
+        #     target_cos = np.zeros((features.shape[0], 1))
+        #     for i in range(features.shape[0]):
+        #         target_cos[i] = cos_theta[i, labels[i]]
+        #     for i in range(features.shape[0]):
+        #         cos_theta[i, labels[i]] = -1e8
+        #     nontarget_cos = np.sort(cos_theta)[:, -params.triplet_topn:]
+        #     l = np.log(1 + np.exp(params.margin + nontarget_cos - target_cos))
+        #     if params.triplet_norm_hard:
+        #         loss["triplet_loss"] = np.sum(l) / np.sum(np.array(np.greater(params.margin + nontarget_cos - target_cos, eps), dtype=np.float) + eps)
+        #     else:
+        #         loss["triplet_loss"] = np.sum(l) / (features.shape[0] * params.triplet_topn)
+        #
+        # loss["center_loss"] = 0.0
+        # cos_theta = np.dot(features, w)
+        # for i in range(features.shape[0]):
+        #     loss["center_loss"] += -1 * cos_theta[i, labels[i]]
+        # loss["center_loss"] /= features.shape[0]
+        #
+        # loss["between_loss"] = 0.0
+        # num_between = 0
+        # for i in range(num_classes):
+        #     for j in range(num_classes):
+        #         if i == j:
+        #             continue
+        #         loss["between_loss"] += np.dot(np.transpose(w[:, i]), w[:, j])
+        #         num_between += 1
+        # loss["between_loss"] /= num_between
+        #
+        # loss["l2_loss"] = 0.0
+        # for i in range(w_update.shape[0]):
+        #     for j in range(w_update.shape[1]):
+        #         loss["l2_loss"] += w_update[i, j] ** 2
+        # loss["l2_loss"] = np.sqrt(loss["l2_loss"])
+        pass
+
+    loss["loss"] = loss["triplet_loss"] + params.center_loss_weight * loss["center_loss"] + params.between_loss_weight * loss["between_loss"] + params.l2_loss_weight * loss["l2_loss"]
+    return loss, w_update
+
+
+def compute_ring_loss(features, params, r):
+    """ Compute ring loss.
+
+    Args:
+        features:
+        params:
+        r:
+    :return:
+    """
+    return params.ring_loss_lambda * np.sum(np.square(np.abs(np.sqrt(np.sum(features ** 2, axis=1)) - r))) / features.shape[0]
+
+
+def compute_mhe(labels, params, w):
+    """ Compute MHE loss.
+
+    Args:
+        labels:
+        params:
+        w:
+    :return:
+    """
+    loss = 0
+    # Norm w
+    w /= np.sqrt(np.sum(w ** 2, axis=0, keepdims=True))
+    for i in range(labels.shape[0]):
+        for j in range(w.shape[1]):
+            if labels[i] == j:
+                continue
+            loss += np.sum(np.square(w[:, labels[i]] - w[:, j]))
+    return params.mhe_lambda * 1 / (loss / (labels.shape[0] * w.shape[1]))

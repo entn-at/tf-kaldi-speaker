@@ -1,11 +1,9 @@
 # Changelog
 
 ## [Todo]
+- Attention using linguistic features.
 
-- Add self attention mechanism.
-- Add support for fisher and NIST SRE.
-
-## [Unreleased]
-
+## [First version]
 - Basic x-vector pipeline.
 - Different loss functions.
+- Self attention mechanism.

@@ -70,3 +70,4 @@ comm=`echo "addpath('../../../misc/DETware_v2.1'); Get_DCF('$nnetdir/xvector_sco
 echo "$comm"| matlab -nodesktop -noFigureWindows > /dev/null
 # rm -f $nnetdir/xvector_scores/sre10_10s_scores_female.new $nnetdir/xvector_scores/sre10_10s_scores_female.target $nnetdir/xvector_scores/sre10_10s_scores_female.nontarget
 tail -n 1 $nnetdir/xvector_scores/sre10_10s_scores_female.result
+

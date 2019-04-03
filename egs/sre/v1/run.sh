@@ -50,7 +50,7 @@ musan=/mnt/lv10/person/liuyi/ly_database/musan/
 # The kaldi sre egs directory
 kaldi_sre=/home/heliang05/liuyi/software/kaldi_gpu/egs/sre16
 
-stage=8
+stage=6
 
 if [ $stage -le -1 ]; then
     # link the directories
@@ -262,56 +262,201 @@ if [ $stage -le 6 ]; then
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2_2
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_1e-2_2.json \
+#  # Train asoftmax network
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-4
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_1e-4.json \
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_fn20
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_fn20.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-6
-#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_1e-6.json \
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_fn30
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_fn30.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
 
-  nnetdir=$exp/test_2
-  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/test.json \
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn_fn20
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn_fn20.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m1_linear_bn_fn30
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m1_linear_bn_fn30.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_fn20
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_fn20.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_fn30
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_fn30.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_fn20
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_fn20.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_fn30
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_fn30.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m4_linear_bn_l5_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m4_linear_bn_l5_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m2_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m2_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_asoftmax_m2_linear_bn_l5_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_asoftmax_m2_linear_bn_l5_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.10_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.10_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.15_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.15_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.20_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.20_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.25_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.25_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.30_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.30_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.35_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.35_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_amsoftmax_m0.45_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_amsoftmax_m0.45_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.10_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.10_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.15_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.15_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.20_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.20_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
+
+  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.25_linear_bn_1e-2
+  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.25_linear_bn_1e-2.json \
     $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
     $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
     $nnetdir
+
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.30_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.30_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
 
 exit 1
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-4
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2
 checkpoint='last'
 
 if [ $stage -le 7 ];then
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre_combined $nnetdir/xvectors_sre_combined
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre10_enroll_coreext_c5_$gender $nnetdir/xvectors_sre10_enroll_coreext_c5_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre10_test_coreext_c5_$gender $nnetdir/xvectors_sre10_test_coreext_c5_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre10_enroll_10s_$gender $nnetdir/xvectors_sre10_enroll_10s_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre10_test_10s_$gender $nnetdir/xvectors_sre10_test_10s_$gender
 fi
 
@@ -358,15 +503,15 @@ fi
 
 if [ $stage -le 9 ]; then
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre16_major $nnetdir/xvectors_sre16_major
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre16_eval_enroll $nnetdir/xvectors_sre16_eval_enroll
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "tdnn6_dense" \
     $nnetdir $data/sre16_eval_test $nnetdir/xvectors_sre16_eval_test
 fi
 
@@ -422,32 +567,32 @@ if [ $stage -le 10 ]; then
   exit 1
 fi
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-4
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2
 checkpoint='last'
 
 if [ $stage -le 11 ];then
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre10_enroll_coreext_c5_$gender $nnetdir/xvectors_sre10_enroll_coreext_c5_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre10_test_coreext_c5_$gender $nnetdir/xvectors_sre10_test_coreext_c5_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre10_enroll_10s_$gender $nnetdir/xvectors_sre10_enroll_10s_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre10_test_10s_$gender $nnetdir/xvectors_sre10_test_10s_$gender
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre16_eval_enroll $nnetdir/xvectors_sre16_eval_enroll
 
   nnet/run_extract_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    --chunk-size 10000 --normalize false \
+    --chunk-size 10000 --normalize false --node "output" \
     $nnetdir $data/sre16_eval_test $nnetdir/xvectors_sre16_eval_test
 fi
 

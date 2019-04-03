@@ -8,7 +8,8 @@ chunk_size=10000
 stage=0
 normalize=false
 checkpoint=-1
-env=tf_env
+env=tf_cpu
+node="output"
 
 echo "$0 $@"
 
@@ -24,6 +25,7 @@ if [ $# != 3 ]; then
   echo "  --chunk-size <10000>"
   echo "  --normalize <false>"
   echo "  --checkpoint <-1>"
+  echo "  --node <output>"
   echo ""
   exit 100
 fi
@@ -48,22 +50,24 @@ feat="ark:apply-cmvn-sliding --norm-vars=false --center=true --cmn-window=300 sc
 # If no conda is used, simply set "--use-env false"
 if [ $stage -le 0 ]; then
   echo "$0: extracting xvectors from nnet"
+  echo "$0: embedding from node $node"
 
   # Set the checkpoint.
-  source $HOME/$env/bin/activate
-  unset PYTHONPATH
-  export LD_LIBRARY_PATH=/home/dawna/mgb3/transcription/exp-yl695/software/anaconda2/lib:$LD_LIBRARY_PATH
-  export PYTHONPATH=`pwd`/../../:$PYTHONPATH
+  source $TF_ENV/$env/bin/activate
+  export PYTHONPATH=$TF_KALDI_ROOT:$PYTHONPATH
   python nnet/lib/make_checkpoint.py --checkpoint $checkpoint "$nnetdir"
   deactivate
 
   if $use_gpu; then
-    $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --gpuid JOB --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
-        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
+    echo "Using CPU to do inference is a better choice."
+    exit 1
+#    $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
+#      nnet/wrap/extract_wrapper.sh --gpuid JOB --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+#        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   else
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+      nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size \
+        --normalize $normalize --node $node \
         "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   fi
 fi
@@ -97,3 +101,5 @@ if [ $stage -le 3 ]; then
       ivector-normalize-length --scaleup=false scp:$dir/xvector_before_norm.scp ark,scp:$dir/xvector.ark,$dir/xvector.scp
   fi
 fi
+
+exit 0

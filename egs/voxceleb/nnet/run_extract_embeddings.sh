@@ -9,6 +9,7 @@ stage=0
 normalize=false
 checkpoint=-1
 env=tf_cpu
+node="output"
 
 echo "$0 $@"
 
@@ -24,6 +25,7 @@ if [ $# != 3 ]; then
   echo "  --chunk-size <10000>"
   echo "  --normalize <false>"
   echo "  --checkpoint <-1>"
+  echo "  --node <output>"
   echo ""
   exit 100
 fi
@@ -48,10 +50,11 @@ feat="ark:apply-cmvn-sliding --norm-vars=false --center=true --cmn-window=300 sc
 # If no conda is used, simply set "--use-env false"
 if [ $stage -le 0 ]; then
   echo "$0: extracting xvectors from nnet"
+  echo "$0: embedding from node $node"
 
   # Set the checkpoint.
   source $TF_ENV/$env/bin/activate
-  export PYTHONPATH=`pwd`/../../:$PYTHONPATH
+  export PYTHONPATH=$TF_KALDI_ROOT:$PYTHONPATH
   python nnet/lib/make_checkpoint.py --checkpoint $checkpoint "$nnetdir"
   deactivate
 
@@ -63,7 +66,8 @@ if [ $stage -le 0 ]; then
 #        "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   else
     $cmd JOB=1:$nj ${dir}/log/extract.JOB.log \
-      nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size --normalize $normalize \
+      nnet/wrap/extract_wrapper.sh --gpuid -1 --env $env --min-chunk-size $min_chunk_size --chunk-size $chunk_size \
+        --normalize $normalize --node $node \
         "$nnetdir" "$feat" "ark:| copy-vector ark:- ark,scp:${dir}/xvector.JOB.ark,${dir}/xvector.JOB.scp"
   fi
 fi

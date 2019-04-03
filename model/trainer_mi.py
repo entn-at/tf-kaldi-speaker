@@ -8,8 +8,8 @@ from dataset.data_loader import KaldiMultiDataRandomQueue, KaldiMultiDataSeqQueu
 from model.common import l2_scaling
 from model.loss import softmax
 from model.loss import asoftmax, additive_margin_softmax, additive_angular_margin_softmax
-from model.loss import semihard_triplet_loss, angular_triplet_loss
-from misc.utils import substring_in_list
+from model.loss import semihard_triplet_loss, angular_triplet_loss, e2e_valid_loss
+from misc.utils import substring_in_list, activation_summaries
 from six.moves import range
 
 
@@ -32,15 +32,9 @@ class TrainerMultiInput(Trainer):
         # The auxiliary features are dictionary that contains multiple possible features.
         # When building the network, the auxiliary features are access by their names.
         # To support more features (inputs), please extend the list below.
-        self.train_aux_features = {"linguistic": None,
-                                   "bottleneck": None,
-                                   "alignment": None}
-        self.valid_aux_features = {"linguistic": None,
-                                   "bottleneck": None,
-                                   "alignment": None}
-        self.pred_aux_features = {"linguistic": None,
-                                  "bottleneck": None,
-                                  "alignment": None}
+        self.train_aux_features = {}
+        self.valid_aux_features = {}
+        self.pred_aux_features = {}
 
     def entire_network(self, features, params, is_training, reuse_variables):
         """The definition of the entire network.
@@ -63,14 +57,20 @@ class TrainerMultiInput(Trainer):
 
         return features, endpoints
 
-    def build(self, mode, dim, loss_type=None, num_speakers=None):
+    def build(self, mode, dim, loss_type=None, num_speakers=None, noupdate_var_list=None):
         """ Build a network.
+
+        This class accept multiple network inputs so that we can use bottleneck features, linguistic features, etc,
+        as the network inputs.
 
         Args:
             mode: `train`, `valid` or `predict`.
             dim: The dimension of the feature.
             loss_type: Which loss function do we use. Could be None when mode == predict
             num_speakers: The total number of speakers. Used in softmax-like network
+            noupdate_var_list: In the fine-tuning, some variables are fixed. The list contains their names (or part of their names).
+                               We use `noupdate` rather than `notrain` because some variables are not trainable, e.g.
+                               the mean and var in the batchnorm layers.
         """
         assert(mode == "train" or mode == "valid" or mode == "predict")
         is_training = (mode == "train")
@@ -151,6 +151,10 @@ class TrainerMultiInput(Trainer):
                 elif loss_type == "additive_angular_margin_softmax":
                     train_margin = self.params.arcsoftmax_m
                     self.params.arcsoftmax_m = 0
+                elif loss_type == "angular_triplet_loss":
+                    # Switch loss to e2e_valid_loss
+                    train_loss_network = self.loss_network
+                    self.loss_network = e2e_valid_loss
                 else:
                     pass
 
@@ -166,6 +170,8 @@ class TrainerMultiInput(Trainer):
                     self.params.amsoftmax_m = train_margin
                 elif loss_type == "additive_angular_margin_softmax":
                     self.params.arcsoftmax_m = train_margin
+                elif loss_type == "angular_triplet_loss":
+                    self.loss_network = train_loss_network
                 else:
                     pass
 
@@ -248,8 +254,31 @@ class TrainerMultiInput(Trainer):
             self.train_summary.append(tf.summary.scalar("learning_rate", self.learning_rate))
 
             # The gradient ops is inside the scope to support multi-gpus
-            batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
-            grads = opt.compute_gradients(total_loss)
+            if noupdate_var_list is not None:
+                old_batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
+                batchnorm_update_ops = []
+                for op in old_batchnorm_update_ops:
+                    if not substring_in_list(op.name, noupdate_var_list):
+                        batchnorm_update_ops.append(op)
+                        tf.logging.info("[Info] Update %s" % op.name)
+                    else:
+                        tf.logging.info("[Info] Op %s will not be executed" % op.name)
+            else:
+                batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
+
+            if noupdate_var_list is not None:
+                variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+                train_var_list = []
+
+                for v in variables:
+                    if not substring_in_list(v.name, noupdate_var_list):
+                        train_var_list.append(v)
+                        tf.logging.info("[Info] Train %s" % v.name)
+                    else:
+                        tf.logging.info("[Info] Var %s will not be updated" % v.name)
+                grads = opt.compute_gradients(total_loss, var_list=train_var_list)
+            else:
+                grads = opt.compute_gradients(total_loss)
 
             # Once the model has been built (even for a tower), we set the flag
             self.is_built = True
@@ -268,12 +297,13 @@ class TrainerMultiInput(Trainer):
                     assert("w" in var.name or "b" in var.name)
             grads = zip(grads_clip, vars)
 
-        # The values and gradients are added to summeries
-        for grad, var in grads:
-            if grad is not None:
-                self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
-                self.train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
+        # # The values and gradients are added to summeries
+        # for grad, var in grads:
+        #     if grad is not None:
+        #         self.train_summary.append(tf.summary.histogram(var.op.name + '/gradients', grad))
+        #         self.train_summary.append(tf.summary.scalar(var.op.name + '/gradients_norm', tf.norm(grad)))
 
+        self.train_summary.append(activation_summaries(endpoints))
         for var in tf.trainable_variables():
             self.train_summary.append(tf.summary.histogram(var.op.name, var))
         self.train_summary = tf.summary.merge(self.train_summary)
@@ -416,7 +446,7 @@ class TrainerMultiInput(Trainer):
 
             try:
                 if step % tune_period == 0:
-                    train_ops = [self.train_ops, self.train_op]
+                    train_ops = [self.train_ops, self.train_op, self.train_summary]
                     start_time = time.time()
 
                     train_val = self.sess.run(train_ops, feed_dict=feed_dict)
@@ -426,6 +456,7 @@ class TrainerMultiInput(Trainer):
                         % (step, end_time - start_time, lr,
                            train_val[0]["raw_loss"], train_val[0]["loss"]))
                     fp_lr.write("%d %f %f\n" % (step, lr, train_val[0]["loss"]))
+                    self.summary_writer.add_summary(train_val[-1], step)
                 else:
                     _ = self.sess.run(self.train_op, feed_dict=feed_dict)
             except DataOutOfRange:
@@ -433,43 +464,6 @@ class TrainerMultiInput(Trainer):
                 break
         data_loader.stop()
         fp_lr.close()
-        return
-
-    def get_finetune_model(self, exclude_list):
-        """Start from a pre-trained model and other parameters are initialized using default initializer.
-        Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
-        we need to fully load the model rather than loading part of the graph.
-
-        Args:
-            exclude_list: A list. Do NOT restore the parameters in the exclude_list. This is useful in fine-truning
-                          an existing model. We load a part of the pre-trained model and leave the other part
-                          randomly initialized.
-        Deprecated:
-            data: The training data directory.
-            spklist: The spklist is a file map speaker name to the index.
-            learning_rate: The learning rate is passed by the main program. The main program can easily tune the
-                           learning rate according to the validation accuracy or anything else.
-        """
-        # initialize all variables
-        self.sess.run(tf.global_variables_initializer())
-
-        # Load parts of the model
-        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-        restore_variables = []
-        for v in variables:
-            if not substring_in_list(v.name, exclude_list):
-                restore_variables.append(v)
-            else:
-                tf.logging.info("[Info] Ignore %s when loading the checkpoint" % v.name)
-        finetune_saver = tf.train.Saver(var_list=restore_variables)
-        ckpt = tf.train.get_checkpoint_state(self.model)
-        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
-        finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
-
-        # Save the new model. The new model is basically the same with the pre-trained one, while parameters
-        # NOT in the pre-trained model are random initialized.
-        # Set the step to 1.
-        self.save(1)
         return
 
     def valid(self, data, spklist, batch_type="softmax", output_embeddings=False, aux_data=None):
@@ -501,7 +495,6 @@ class TrainerMultiInput(Trainer):
         else:
             tf.logging.info("[Warning] Cannot find model in %s. Random initialization is used in validation." % self.model)
 
-        valid_ops = [self.valid_ops, self.valid_summary]
         embeddings_val = None
         labels_val = None
         num_batches = 0
@@ -519,7 +512,6 @@ class TrainerMultiInput(Trainer):
 
             # In this mode, the embeddings and labels will be saved and output. It needs more memory and takes longer
             # to process these values.
-            valid_ops_emb = valid_ops + [self.embeddings, self.valid_labels]
             while True:
                 try:
                     if num_batches % 100 == 0:
@@ -533,15 +525,14 @@ class TrainerMultiInput(Trainer):
                             continue
                         feed_dict[self.valid_aux_features[name]] = features[name]
 
-                    valid_val = self.sess.run(valid_ops_emb, feed_dict=feed_dict)
+                    valid_emb_val, valid_labels_val = self.sess.run([self.embeddings, self.valid_labels], feed_dict=feed_dict)
                     # Save the embeddings and labels
                     if embeddings_val is None:
-                        embeddings_val = valid_val[-2]
-                        labels_val = valid_val[-1]
+                        embeddings_val = valid_emb_val
+                        labels_val = valid_labels_val
                     else:
-                        embeddings_val = np.concatenate((embeddings_val, valid_val[-2]), axis=0)
-                        labels_val = np.concatenate((labels_val, valid_val[-1]), axis=0)
-                    loss = valid_val[0]["valid_loss"]
+                        embeddings_val = np.concatenate((embeddings_val, valid_emb_val), axis=0)
+                        labels_val = np.concatenate((labels_val, valid_labels_val), axis=0)
                     num_batches += 1
                 except DataOutOfRange:
                     break
@@ -581,15 +572,15 @@ class TrainerMultiInput(Trainer):
                         continue
                     feed_dict[self.valid_aux_features[name]] = features[name]
 
-                valid_val = self.sess.run(valid_ops, feed_dict=feed_dict)
-                loss = valid_val[0]["valid_loss"]
+                _ = self.sess.run(self.valid_ops["valid_loss_op"], feed_dict=feed_dict)
                 num_batches += 1
             except DataOutOfRange:
                 break
         data_loader.stop()
 
+        loss, summary = self.sess.run([self.valid_ops["valid_loss"], self.valid_summary])
         # We only save the summary for the last batch.
-        self.valid_summary_writer.add_summary(valid_val[1], curr_step)
+        self.valid_summary_writer.add_summary(summary, curr_step)
         # The valid loss is averaged over all the batches.
         tf.logging.info("[Validation %d batches] valid loss: %f" % (num_batches, loss))
 
@@ -619,7 +610,8 @@ class TrainerMultiInput(Trainer):
             if name == "features":
                 continue
             feed_dict[self.pred_aux_features[name]] = features[name]
-            assert(features["features"].shape == features[name].shape)
+            # The shape of the features should be the same except for the last dimension.
+            assert(features["features"].shape[:-1] == features[name].shape[:-1])
 
         embeddings = self.sess.run(self.embeddings, feed_dict=feed_dict)
         if rank == 2:
@@ -672,3 +664,49 @@ class TrainerMultiInput(Trainer):
         batchnorm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope)
         with tf.control_dependencies(batchnorm_update_ops):
             self.train_op = self.optimizer.apply_gradients(grads)
+
+    def get_finetune_model(self, excluded_list):
+        """Start from a pre-trained model and other parameters are initialized using default initializer.
+        Actually, this function is only called at the first epoch of the fine-tuning, because in succeeded epochs,
+        we need to fully load the model rather than loading part of the graph.
+
+        The pre-trained model is saved in the model directory as index 0.
+        Backup the pre-trained model and save the new model (with random initialized parameters) as index 0 instead.
+
+        Args:
+            excluded_list: A list. Do NOT restore the parameters in the exclude_list. This is useful in fine-truning
+                          an existing model. We load a part of the pre-trained model and leave the other part
+                          randomly initialized.
+        Deprecated:
+            data: The training data directory.
+            spklist: The spklist is a file map speaker name to the index.
+            learning_rate: The learning rate is passed by the main program. The main program can easily tune the
+                           learning rate according to the validation accuracy or anything else.
+        """
+        # initialize all variables
+        self.sess.run(tf.global_variables_initializer())
+
+        # Load parts of the model
+        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+        restore_variables = []
+        for v in variables:
+            if not substring_in_list(v.name, excluded_list):
+                restore_variables.append(v)
+            else:
+                tf.logging.info("[Info] Ignore %s when loading the checkpoint" % v.name)
+        finetune_saver = tf.train.Saver(var_list=restore_variables)
+        ckpt = tf.train.get_checkpoint_state(self.model)
+        ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+        finetune_saver.restore(self.sess, os.path.join(self.model, ckpt_name))
+
+        # Backup the old files
+        import glob, shutil
+        model_checkpoint_path = ckpt.model_checkpoint_path
+        for filename in glob.glob(model_checkpoint_path + "*"):
+            shutil.copyfile(filename, filename + '.bak')
+
+        # Save the new model. The new model is basically the same with the pre-trained one, while parameters
+        # NOT in the pre-trained model are random initialized.
+        # Set the step to 0.
+        self.save(0)
+        return

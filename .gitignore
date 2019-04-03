@@ -123,6 +123,34 @@ dmypy.json
 *.m~
 ._*
 
-egs/voxceleb/nnet_conf/bak*
+._.DS_Store
+
+# backup
+egs/voxceleb/nnet_conf.bak/*
+egs/sre/v1/nnet_conf.bak/*
+egs/sre/v1/nnet_conf/test.json
 egs/mgb*
 egs/leap*
+egs/fisher/v1/nnet_conf.bak/*
+egs/fisher/v2*
+egs/fisher/v3*
+
+# Unfinished
+egs/voxceleb/nnet/run_extract_mt_embeddings.sh
+egs/voxceleb/nnet/run_train_mt_nnet.sh
+egs/voxceleb/nnet/wrap/extract_mt_phone_wrapper.sh
+egs/voxceleb/nnet/wrap/extract_mt_wrapper.sh
+dataset/multitask/*
+model/multitask/*
+scripts/prepare_pdf_for_multitask_egs.sh
+scripts/prepare_feats_for_multitask_egs.sh
+
+# Unused 
+egs/voxceleb/nnet/run_extract_bnf_mi_embeddings.sh
+egs/voxceleb/nnet/run_train_mi_nnet.sh
+egs/voxceleb/nnet/wrap/extract_mi_wrapper.sh
+scripts/prepare_bnfeats_for_egs.sh
+scripts/extract_bnf.sh
+
+# intermediate files
+misc/tools/score*

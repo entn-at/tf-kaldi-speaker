@@ -1,6 +1,8 @@
 import tensorflow as tf
 from collections import OrderedDict
+import random
 from six.moves import range
+import numpy as np
 
 def shape_list(x):
     """Return list of dims, statically where possible."""
@@ -126,19 +128,21 @@ def dense_relu(features, num_nodes, endpoints, params, is_training=None, name="d
             relu = prelu
         if params.network_relu_type == "lrelu":
             relu = tf.nn.leaky_relu
-    features = tf.layers.dense(features,
-                               num_nodes,
-                               activation=None,
-                               kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
-                               name="%s_dense" % name)
-    endpoints["%s_dense" % name] = features
-    features = tf.layers.batch_normalization(features,
-                                             momentum=params.batchnorm_momentum,
-                                             training=is_training,
-                                             name="%s_bn" % name)
-    endpoints["%s_bn" % name] = features
-    features = relu(features, name='%s_relu' % name)
-    endpoints["%s_relu" % name] = features
+
+    with tf.variable_scope(name):
+        features = tf.layers.dense(features,
+                                   num_nodes,
+                                   activation=None,
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                   name="%s_dense" % name)
+        endpoints["%s_dense" % name] = features
+        features = tf.layers.batch_normalization(features,
+                                                 momentum=params.batchnorm_momentum,
+                                                 training=is_training,
+                                                 name="%s_bn" % name)
+        endpoints["%s_bn" % name] = features
+        features = relu(features, name='%s_relu' % name)
+        endpoints["%s_relu" % name] = features
     return features
 
 
@@ -154,14 +158,15 @@ def dense_tanh(features, num_nodes, endpoints, params, is_training=None, name="d
         name:
     :return: The output of the layer. The endpoints also contains the intermediate outputs of this layer.
     """
-    features = tf.layers.dense(features,
-                               num_nodes,
-                               activation=None,
-                               kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
-                               name="%s_dense" % name)
-    endpoints["%s_dense" % name] = features
-    features = tf.nn.tanh(features, name='%s_tanh' % name)
-    endpoints["%s_tanh" % name] = features
+    with tf.variable_scope(name):
+        features = tf.layers.dense(features,
+                                   num_nodes,
+                                   activation=None,
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                   name="%s_dense" % name)
+        endpoints["%s_dense" % name] = features
+        features = tf.nn.tanh(features, name='%s_tanh' % name)
+        endpoints["%s_tanh" % name] = features
     return features
 
 

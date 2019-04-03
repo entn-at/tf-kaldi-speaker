@@ -34,6 +34,10 @@ export PYTHONPATH=$TF_KALDI_ROOT:$PYTHONPATH
 
 mkdir -p $nnetdir/log
 
+if [ $continue_training == 'true' ]; then
+  cmdopts="-c"
+fi
+
 # Get available GPUs before we can train the network.
 num_total_gpus=`nvidia-smi -L | wc -l`
 num_gpus_assigned=0
@@ -52,14 +56,8 @@ while [ $num_gpus_assigned -ne $num_gpus ]; do
 done
 
 source $TF_ENV/$env/bin/activate
-if [ $continue_training == 'true' ]; then
-  # When continue training, just call the train.py
-  $cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
-    python nnet/lib/train.py -c --config $config $train $train_spklist $valid $valid_spklist $nnetdir
-else
-  $cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
-    python nnet/lib/finetune.py --checkpoint $checkpoint --config $config $train $train_spklist $valid $valid_spklist $pretrain_nnetdir $nnetdir
-fi
+$cmd $nnetdir/log/train_nnet.log utils/parallel/limit_num_gpus.sh --num-gpus $num_gpus \
+  python nnet/lib/finetune.py $cmdopts --checkpoint $checkpoint --config $config $train $train_spklist $valid $valid_spklist $pretrain_nnetdir $nnetdir
 deactivate
 
 exit 0

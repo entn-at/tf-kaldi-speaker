@@ -149,6 +149,169 @@ class FeatureReader(object):
         return mat, start
 
 
+class FeatureReaderV2(object):
+    """Read kaldi features and alignments.
+
+    This is used for multitask training.
+    """
+
+    def __init__(self, data_dir, ali_dir):
+        """data_dir contains feats.scp, utt2num_frames, vad.scp.
+        ali_dir contains pdf.scp (NOT ali.scp) which is confusing here.
+        ali.scp consists of transition ids while pdf.scp consists of pdf ids.
+        So ali.scp should be converted to pdf.scp before training.
+        In Kaldi, ali-to-pdf and ali-to-post is used in the egs generation script.
+
+        Args:
+            data_dir: The kaldi data directory.
+            ali_dir: The kaldi ali directory.
+        """
+        self.ali_fd = {}
+        self.vad_fd = {}
+        self.fd = {}
+
+        self.data_dir = data_dir
+        self.ali_dir = ali_dir
+
+        # Load utt2num_frames that the object can find the length of the utterance quickly.
+        self.utt2num_frames = {}
+        assert os.path.exists(os.path.join(data_dir, "utt2num_frames")), "[Error] Expect utt2num_frames exists in %s " % data_dir
+        with open(os.path.join(data_dir, "utt2num_frames"), 'r') as f:
+            for line in f.readlines():
+                utt, length = line.strip().split(" ")
+                self.utt2num_frames[utt] = int(length)
+
+        # We do not have offset here. So we have to record the offset in different files in order to seek them quickly.
+        self.utt2feats_offset = {}
+        assert os.path.exists(os.path.join(data_dir, "feats.scp")), "[ERROR] Expect feats.scp exists in %s" % data_dir
+        with open(os.path.join(data_dir, "feats.scp")) as f:
+            for line in f.readlines():
+                utt, info = line.strip().split(" ")
+                info = info.split(":")
+                # info[0] is the filename, info[1] is the offset
+                self.utt2feats_offset[utt] = [info[0], int(info[1])]
+
+        self.utt2vad_offset = {}
+        assert os.path.exists(os.path.join(data_dir, "vad.scp")), "[ERROR] Expect vad.scp exists in %s" % data_dir
+        with open(os.path.join(data_dir, "vad.scp")) as f:
+            for line in f.readlines():
+                utt, info = line.strip().split(" ")
+                info = info.split(":")
+                self.utt2vad_offset[utt] = [info[0], int(info[1])]
+
+        self.utt2ali_offset = {}
+        assert os.path.exists(os.path.join(ali_dir, "pdf.scp")), "[ERROR] Expect pdf.scp exists in %s" % ali_dir
+        with open(os.path.join(ali_dir, "pdf.scp")) as f:
+            for line in f.readlines():
+                utt, info = line.strip().split(" ")
+                info = info.split(":")
+                self.utt2ali_offset[utt] = [info[0], int(info[1])]
+
+        self.dim = self.get_dim()
+
+    def get_dim(self):
+        with open(os.path.join(self.data_dir, "feats.scp"), "r") as f:
+            dim = self.read_segment(f.readline().split(" ")[0])[0].shape[1]
+        return dim
+
+    def close(self):
+        for name in self.fd:
+            self.fd[name].close()
+        for name in self.vad_fd:
+            self.vad_fd[name].close()
+        for name in self.ali_fd:
+            self.ali_fd[name].close()
+
+    def read_segment(self, filename, length=None, shuffle=False, start=None):
+        """ [mat, vad, ali, start_point] = read_segment(file_or_fd)
+         filename : The filename we want to load.
+
+        In order to load vad.scp and pdf.scp as well as feats.scp, we need the name of the feature.
+        Unlike FeatureReader, the filename should not contain offset.
+        """
+        utt = filename
+        feats_filename, feats_offset = self.utt2feats_offset[utt]
+        if feats_filename not in self.fd:
+            fd = open(feats_filename, 'rb')
+            assert fd is not None
+            self.fd[feats_filename] = fd
+        # Load the features
+        self.fd[feats_filename].seek(feats_offset)
+        try:
+            binary = self.fd[feats_filename].read(2).decode()
+            num_features = self.utt2num_frames[utt]
+            if binary == '\0B':
+                # Do we need to load the entire recording?
+                if length is not None:
+                    if start is None:
+                        # If the length is too long, clip it to #frames
+                        length = num_features if length > num_features else length
+                        if shuffle:
+                            # Sample a start point for phonetic training (assuming 4 frames)
+                            start = random.randint(0, length - 4)
+                            if start + length > num_features:
+                                start = num_features - length
+                            # The phoneic examples are at the beginning of the segments (except for the last segment).
+                            mat = _read_submat_binary(self.fd[feats_filename], start, length)
+                        else:
+                            start = 0
+                            mat = _read_submat_binary(self.fd[feats_filename], 0, length)
+                    else:
+                        assert not shuffle, "The start point is specified, thus shuffling is invalid."
+                        if start + length > num_features:
+                            length = num_features - start
+                            # print("The length %d is too long for %s start from %d. Clip to %d" %
+                            #       (length, utt, start, num_features - start))
+                        mat = _read_submat_binary(self.fd[feats_filename], start, length)
+                else:
+                    mat = _read_mat_binary(self.fd[feats_filename])
+                    start = 0
+                    length = mat.shape[0]
+                    assert length == num_features
+            else:
+                raise IOError("Cannot read features from %s" % feats_filename)
+        except:
+            raise IOError("Cannot read features from %s" % feats_filename)
+
+        # start, length are got from the feature loading.from
+        # Use them in the vad and alignment loading.
+        vad_filename, vad_offset = self.utt2vad_offset[utt]
+        if vad_filename not in self.vad_fd:
+            vad_fd = open(vad_filename, 'rb')
+            assert vad_fd is not None
+            self.vad_fd[vad_filename] = vad_fd
+        # Load the vad
+        self.vad_fd[vad_filename].seek(vad_offset)
+        try:
+            binary = self.vad_fd[vad_filename].read(2).decode()
+            if binary == '\0B':  # binary flag
+                vad = _read_subvec_flt_binary(self.vad_fd[vad_filename], start, length)
+            else:  # ascii,
+                raise IOError("Cannot read vad from %s" % vad_filename)
+        except:
+            raise IOError("Cannot read vad from %s" % vad_filename)
+
+        # Use start, length to load alignment
+        ali_filename, ali_offset = self.utt2ali_offset[utt]
+        if ali_filename not in self.ali_fd:
+            ali_fd = open(ali_filename, 'rb')
+            assert ali_fd is not None
+            self.ali_fd[ali_filename] = ali_fd
+        # Load the alignment
+        self.ali_fd[ali_filename].seek(ali_offset)
+        try:
+            binary = self.ali_fd[ali_filename].read(2).decode()
+            if binary == '\0B':  # binary flag
+                ali = _read_subvec_int_binary(self.ali_fd[ali_filename], start, length)
+            else:  # ascii,
+                raise IOError("Cannot read ali from %s" % ali_filename)
+        except:
+            raise IOError("Cannot read ali from %s" % ali_filename)
+
+        assert mat.shape[0] == vad.shape[0] and mat.shape[0] == ali.shape[0]
+        return mat, vad, ali, start
+
+
 #################################################
 # Data-type independent helper functions,
 
@@ -285,6 +448,18 @@ def read_vec_int(file_or_fd):
     if fd is not file_or_fd : fd.close() # cleanup
     return ans
 
+def _read_subvec_int_binary(fd, start, length):
+    assert (fd.read(1).decode() == '\4')  # int-size
+    vec_size = np.frombuffer(fd.read(4), dtype='int32', count=1)[0]  # vector dim
+    assert start + length <= vec_size
+    if start > 0:
+        fd.seek(start * 5, 1)
+    # Elements from int32 vector are sored in tuples: (sizeof(int32), value),
+    vec = np.frombuffer(fd.read(length * 5), dtype=[('size', 'int8'), ('value', 'int32')], count=length)
+    assert (vec[0]['size'] == 4)  # int32 size,
+    ans = vec[:]['value']  # values are in 2nd column,
+    return ans
+
 # Writing,
 def write_vec_int(file_or_fd, v, key=''):
     """ write_vec_int(f, v, key='')
@@ -391,6 +566,32 @@ def read_vec_flt(file_or_fd):
             pass
         ans = np.array(arr, dtype=float)
     if fd is not file_or_fd : fd.close() # cleanup
+    return ans
+
+def _read_subvec_flt_binary(fd, start, length):
+    # Data type,
+    header = fd.read(3).decode()
+    if header == 'FV ':
+        sample_size = 4  # floats
+    elif header == 'DV ':
+        sample_size = 8  # doubles
+    else:
+        raise UnknownVectorHeader("The header contained '%s'" % header)
+    assert (sample_size > 0)
+    # Dimension,
+    assert (fd.read(1).decode() == '\4')  # int-size
+    vec_size = np.frombuffer(fd.read(4), dtype='int32', count=1)[0]  # vector dim
+    assert start + length <= vec_size
+    # seek from the current position
+    if start > 0:
+        fd.seek(start * sample_size, 1)
+    buf = fd.read(length * sample_size)
+    if sample_size == 4:
+        ans = np.frombuffer(buf, dtype='float32')
+    elif sample_size == 8:
+        ans = np.frombuffer(buf, dtype='float64')
+    else:
+        raise BadSampleSize
     return ans
 
 # Writing,

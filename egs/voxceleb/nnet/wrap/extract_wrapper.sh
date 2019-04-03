@@ -5,6 +5,7 @@ gpuid=-1
 min_chunk_size=25
 chunk_size=10000
 normalize=false
+node="output"
 
 if [ -f path.sh ]; then . ./path.sh; fi
 . parse_options.sh || exit 1;
@@ -16,6 +17,7 @@ if [ $# != 3 ]; then
   echo "  --min-chunk-size <25>"
   echo "  --chunk-size <10000>"
   echo "  --normalize <false>"
+  echo "  --node <output>"
   echo ""
   exit 100
 fi
@@ -34,5 +36,6 @@ fi
 
 export PYTHONPATH=`pwd`/../../:$PYTHONPATH
 
-python nnet/lib/extract.py --gpu $gpuid --min-chunk-size $min_chunk_size --chunk-size $chunk_size $cmdopt_norm \
+python nnet/lib/extract.py --gpu $gpuid --node $node --min-chunk-size $min_chunk_size --chunk-size $chunk_size $cmdopt_norm\
          "$nnetdir" "$feat" "$dir"
+deactivate

@@ -119,9 +119,11 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
         endpoints["attention_weights"] = weights
 
         # Penalty term
-        penalty = tf.einsum('ijk,ikl->ijl', weights, tf.transpose(weights, [0, 2, 1])) - tf.eye(n_heads)
-        penalty = tf.reduce_sum(tf.square(penalty))
+        penalty = tf.einsum('ijk,ikl->ijl', weights, tf.transpose(weights, [0, 2, 1])) - tf.eye(n_heads, batch_shape=[val_shape[0]])
+        # Normalize using the batch size
+        penalty = tf.reduce_sum(tf.square(penalty)) / tf.to_float(val_shape[0])
         tf.add_to_collection("PENALTY", params.self_att_penalty_term * penalty)
+        tf.summary.scalar("attention_penalty", params.self_att_penalty_term * penalty)
 
         # # Debug
         # # Comment lines when running the code
@@ -131,26 +133,27 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
     return att
 
 
-def linguistic_attention(features, aux_features, endpoints, params, is_training=None):
-    """Attention using linguistic features.
-    The attention layer has some minor problem that the length of the key may be different with the length of the value,
-    due to the convnet. The key usually has the original feature length while the length of the value is shorter.
+def aux_attention(features, aux_features, endpoints, params, is_training=None):
+    """Attention using auxiliary features.
 
-    A workaround is to use the center of the key to make length of the key and the value the same.
+    The attention layer has a minor problem that the length of the key may be different with the length of the value,
+    due to the convnet. The key usually has the original feature length while the length of the value is shorter.
     We always using the fully-connected layer in the key network, so the length remains the same.
+    A workaround is to use the center of the key to make length of the key and the value the same.
 
     Note: When auxiliary key is used, the hypothesis is that the length of this auxiliary feature is the same with the value.
 
     Args:
         features: A tensor with shape [batch, length, dim].
         aux_features: A dict.
-        aux_featuers["linguistic"]: The length is LONGER than features!!!
+        aux_featuers["aux_feat_name"]: The length is LONGER than features!!!
                                     The features is processed by convnet thus the length becomes shorter.
         TODO: How to trim the auxiliary features? Align left or center?
         endpoints: Outputs of different parts of the network.
         params: Parameters for self-attention.
-            params.att_aux_key_input: Additional key input except for the linguistic features.
-                                      If None then only linguistic features are used.
+            params.att_aux_name: The name of the auxiliary features.
+            params.att_aux_key_input: Additional key input except for the auxiliary features.
+                                      If None then only the auxiliary features are used.
             params.att_key_num_nodes: The network to compute the key.
             params.att_value_num_nodes: The network to compute the value.
             params.att_num_heads: The number of heads in multi-head attention.
@@ -160,7 +163,8 @@ def linguistic_attention(features, aux_features, endpoints, params, is_training=
         is_training: Used in BN.
     :return:
     """
-    assert "att_aux_key_input" in params.dict
+    assert "att_aux_name" in params.dict
+    assert "att_key_input" in params.dict
     assert "att_key_num_nodes" in params.dict
     assert "att_value_num_nodes" in params.dict
     assert "att_num_heads" in params.dict
@@ -168,27 +172,33 @@ def linguistic_attention(features, aux_features, endpoints, params, is_training=
 
     with tf.variable_scope("attention"):
         value_features = features
-        if "linguistic" not in aux_features:
-            sys.exit("The key linguistic is not in aux_features.")
-        key_features = aux_features["linguistic"]
+        for aux_name in params.att_aux_name:
+            if aux_name not in aux_features:
+                sys.exit("The aux features %s is not in aux_features." % aux_name)
 
-        # Center trimming. Use the center of the key to match the length of the value.
-        trim_length = (shape_list(key_features)[1] - shape_list(value_features)[1]) / 2
-        key_features = key_features[:, trim_length:-trim_length, :]
-        # # TODO: If the length of the key and the value is the same, the next line is useful.
-        # # But the above line looks more neat (What...).
-        # key_features = tf.cond(tf.equal(trim_length, 0),
-        #                        lambda: key_features,
-        #                        lambda: key_features[:, trim_length:-trim_length, :])
+        key_features = []
+        for aux_name in params.att_aux_name:
+            # Center trimming. Use the center of the key to match the length of the value.
+            trim_length = (shape_list(aux_features[aux_name])[1] - shape_list(value_features)[1]) / 2
+            # This requires the total kernel size is a odd number.
+            key_features.append(aux_features[aux_name][:, trim_length:-trim_length, :])
 
-        tf.logging.info("Attention:")
-        if params.att_aux_key_input is not None:
-            if params.att_aux_key_input not in endpoints:
+            # # TODO: If the length of the key and the value is the same, the next line is useful.
+            # # But the above line looks more neat (What...).
+            # key_features = tf.cond(tf.equal(trim_length, 0),
+            #                        lambda: aux_features[aux_name],
+            #                        lambda: aux_features[aux_name][:, trim_length:-trim_length, :])
+
+        tf.logging.info("Attention using auxiliary features:")
+        if params.att_key_input is not None:
+            if params.att_key_input not in endpoints:
                 sys.exit(
-                    "You specify the appended key %s, but I cannot find it in the endpoints." % params.att_aux_key_input)
-            tf.logging.info("Append %s to the linguistic features" % params.att_aux_key_input)
-            key_features = tf.concat([key_features, endpoints[params.att_aux_key_input]], axis=-1,
-                                     name="key_features")
+                    "You specify the appended key %s, but I cannot find it in the endpoints." % params.att_key_input)
+            tf.logging.info("Append %s to the auxiliary features" % params.att_key_input)
+            key_features.append(endpoints[params.att_key_input])
+
+        # Concatenate all the features to the key.
+        key_features = tf.concat(key_features, axis=-1, name="key_features")
 
         if len(params.att_key_num_nodes) != 0:
             # According to "A STRUCTURED SELF-ATTENTIVE SENTENCE EMBEDDING",
@@ -243,9 +253,10 @@ def linguistic_attention(features, aux_features, endpoints, params, is_training=
         endpoints["attention_weights"] = weights
 
         # Penalty term
-        penalty = tf.einsum('ijk,ikl->ijl', weights, tf.transpose(weights, [0, 2, 1])) - tf.eye(n_heads)
-        penalty = tf.reduce_sum(tf.square(penalty))
+        penalty = tf.einsum('ijk,ikl->ijl', weights, tf.transpose(weights, [0, 2, 1])) - tf.eye(n_heads, batch_shape=[val_shape[0]])
+        penalty = tf.reduce_sum(tf.square(penalty)) / tf.to_float(val_shape[0])
         tf.add_to_collection("PENALTY", params.att_penalty_term * penalty)
+        tf.summary.scalar("attention_penalty", params.att_penalty_term * penalty)
 
         # # Debug
         # # Comment lines when running the code
@@ -353,89 +364,89 @@ if __name__ == "__main__":
     #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
     #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
 
-    # # Self-attention
-    # params = ParamsPlain()
-    # params.dict["self_att_key_input"] = "key"
-    # params.dict["self_att_key_num_nodes"] = []
-    # params.dict["self_att_value_num_nodes"] = []
-    # params.dict["self_att_num_heads"] = 10
-    # params.dict["self_att_penalty_term"] = 1
-    # params.dict["weight_l2_regularizer"] = 1e-2
-    # params.dict["batchnorm_momentum"] = 0.99
-    #
-    # endpoints["key"] = features
-    # self_att = self_attention(features, aux_features, endpoints, params, is_training=True)
-    # penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
-    # grads = tf.gradients(self_att, features)
-    # grads_penalty = tf.gradients(penalty_loss, features)
-    #
-    # with tf.Session() as sess:
-    #     sess.run(tf.global_variables_initializer())
-    #     import numpy as np
-    #     features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
-    #     features_val[0, :, :] = 1e-8 * features_val[0, :, :]
-    #     features_val[1, :, :] = 0
-    #     features_val[2, :, :] = 100 * features_val[2, :, :]
-    #     features_val[3, :, :] = 100
-    #     self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
-    #     query = endpoints_val["att_query"]
-    #     value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.self_att_num_heads,
-    #                                       features_val.shape[2] / params.self_att_num_heads])
-    #     value = np.transpose(value, [0,2,1,3])
-    #     key = features_val
-    #
-    #     from model.test_utils import compute_self_attention
-    #     self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
-    #
-    #     assert np.allclose(np.sum(self_att_val), np.sum(self_att_np))
-    #     assert np.allclose(penalty_loss_val, penalty_loss_np)
-    #
-    #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
-    #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
-
-    # Linguistic attention
+    # Self-attention
     params = ParamsPlain()
-    params.dict["att_aux_key_input"] = "key"
-    params.dict["att_key_num_nodes"] = []
-    params.dict["att_value_num_nodes"] = []
-    params.dict["att_num_heads"] = 1
-    params.dict["att_penalty_term"] = 1
+    params.dict["self_att_key_input"] = "key"
+    params.dict["self_att_key_num_nodes"] = []
+    params.dict["self_att_value_num_nodes"] = []
+    params.dict["self_att_num_heads"] = 10
+    params.dict["self_att_penalty_term"] = 1
     params.dict["weight_l2_regularizer"] = 1e-2
     params.dict["batchnorm_momentum"] = 0.99
 
-    endpoints["key"] = aux_features
-    att = linguistic_attention(features, linguistic_features_all, endpoints, params, is_training=True)
+    endpoints["key"] = features
+    self_att = self_attention(features, aux_features, endpoints, params, is_training=True)
     penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
-    grads = tf.gradients(att, features)
-    grads_penalty = tf.gradients(penalty_loss, linguistic_features_all["linguistic"])
+    grads = tf.gradients(self_att, features)
+    grads_penalty = tf.gradients(penalty_loss, features)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         import numpy as np
-
-        features_val = np.random.rand(num_data, num_length-4, num_dim).astype(np.float32)
+        features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
         features_val[0, :, :] = 1e-8 * features_val[0, :, :]
         features_val[1, :, :] = 0
         features_val[2, :, :] = 100 * features_val[2, :, :]
         features_val[3, :, :] = 100
-
-        aux_features_val = np.random.rand(num_data, num_length-4, 100).astype(np.float32)
-        linguistic_features_val = np.random.rand(num_data, num_length, 500).astype(np.float32)
-
-        att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run(
-            [att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val,
-                                                                             aux_features: aux_features_val,
-                                                                             linguistic_features: linguistic_features_val})
+        self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
         query = endpoints_val["att_query"]
-        value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.att_num_heads, features_val.shape[2]/params.att_num_heads])
+        value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.self_att_num_heads,
+                                          features_val.shape[2] / params.self_att_num_heads])
         value = np.transpose(value, [0,2,1,3])
-        key = np.concatenate([linguistic_features_val[:,2:-2,:], aux_features_val], axis=-1)
+        key = features_val
 
-        from model.test_utils import compute_attention
-        att_np, penalty_loss_np = compute_attention(value, key, query, params)
+        from model.test_utils import compute_self_attention
+        self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
 
-        assert np.allclose(np.sum(att_val), np.sum(att_np))
+        assert np.allclose(np.sum(self_att_val), np.sum(self_att_np))
         assert np.allclose(penalty_loss_val, penalty_loss_np)
 
         assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
         assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
+
+    # # Linguistic attention
+    # params = ParamsPlain()
+    # params.dict["att_aux_key_input"] = "key"
+    # params.dict["att_key_num_nodes"] = []
+    # params.dict["att_value_num_nodes"] = []
+    # params.dict["att_num_heads"] = 1
+    # params.dict["att_penalty_term"] = 1
+    # params.dict["weight_l2_regularizer"] = 1e-2
+    # params.dict["batchnorm_momentum"] = 0.99
+    #
+    # endpoints["key"] = aux_features
+    # att = linguistic_attention(features, linguistic_features_all, endpoints, params, is_training=True)
+    # penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
+    # grads = tf.gradients(att, features)
+    # grads_penalty = tf.gradients(penalty_loss, linguistic_features_all["linguistic"])
+    #
+    # with tf.Session() as sess:
+    #     sess.run(tf.global_variables_initializer())
+    #     import numpy as np
+    #
+    #     features_val = np.random.rand(num_data, num_length-4, num_dim).astype(np.float32)
+    #     features_val[0, :, :] = 1e-8 * features_val[0, :, :]
+    #     features_val[1, :, :] = 0
+    #     features_val[2, :, :] = 100 * features_val[2, :, :]
+    #     features_val[3, :, :] = 100
+    #
+    #     aux_features_val = np.random.rand(num_data, num_length-4, 100).astype(np.float32)
+    #     linguistic_features_val = np.random.rand(num_data, num_length, 500).astype(np.float32)
+    #
+    #     att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run(
+    #         [att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val,
+    #                                                                          aux_features: aux_features_val,
+    #                                                                          linguistic_features: linguistic_features_val})
+    #     query = endpoints_val["att_query"]
+    #     value = np.reshape(features_val, [features_val.shape[0], features_val.shape[1], params.att_num_heads, features_val.shape[2]/params.att_num_heads])
+    #     value = np.transpose(value, [0,2,1,3])
+    #     key = np.concatenate([linguistic_features_val[:,2:-2,:], aux_features_val], axis=-1)
+    #
+    #     from model.test_utils import compute_attention
+    #     att_np, penalty_loss_np = compute_attention(value, key, query, params)
+    #
+    #     assert np.allclose(np.sum(att_val), np.sum(att_np))
+    #     assert np.allclose(penalty_loss_val, penalty_loss_np)
+    #
+    #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+    #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
