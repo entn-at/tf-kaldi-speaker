@@ -79,6 +79,22 @@ Again, the backend classifier is integrated using Kaldi.
 
     The speed could be much faster if multi-GPUs are used. The multi-GPU support is not too difficult. Adding gradient towers can achieve that.
 
+# Pretrained models
+
+* VoxCeleb
+
+	Training data: VoxCeleb1 dev set and VoxCeleb2
+	
+	[Google Drive](https://drive.google.com/open?id=1ELcqFifG8bqeMqAu3BDef8S206rTvieD) and 
+	
+	[BaiduYunDisk](https://pan.baidu.com/s/1zByC_zwY9YM5bhkJzH4gNQ) (extraction code: xwu6)
+
+* NIST SRE
+
+	Training data: NIST SRE04-08, SWBD
+	
+	The SRE models are available upon request.
+
 
 # Pros and cons
 
@@ -108,7 +124,7 @@ Deeper network is worth trying since we have enough training data.
 
 # Acknowledgements
 
-The computational resources are mainly supported by Dr. Liang He.
+The computational resources are initially provided by Prof. Gales, and then mainly supported by Dr. Liang He.
 
 
 # Last ...

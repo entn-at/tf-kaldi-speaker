@@ -25,7 +25,7 @@ This results in different performance in the table.
 | TDNN (ours) | Stat | AMSoftmax (m=0.25) | VoxCeleb2 + VoxCeleb1 dev | 2.15 | 0.0119 | 0.3559 |
 | TDNN (ours) | Stat | AMSoftmax (m=0.30) | VoxCeleb2 + VoxCeleb1 dev | 2.18 | 0.0115 | 0.3152 |
 | TDNN (ours) | Stat | AMSoftmax (m=0.20) + Ring Loss ($\lambda=0.01$) | VoxCeleb2 + VoxCeleb1 dev | 2.07 | 0.0107 | 0.2687 |
-| TDNN (ours) | Stat | AMSoftmax (m=0.20) + MHE ($\lambda=0.01$) | VoxCeleb2 + VoxCeleb1 dev | 2 | 0.0106 | 0.2487 |
+| TDNN (ours) | Stat | AMSoftmax (m=0.20) + MHE ($\lambda=0.01$) | VoxCeleb2 + VoxCeleb1 dev | 2.00 | 0.0106 | 0.2487 |
 
 
 ## NIST SRE
