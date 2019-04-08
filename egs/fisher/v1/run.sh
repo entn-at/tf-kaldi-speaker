@@ -30,7 +30,7 @@ if [ $stage -le -1 ]; then
     ln -s $kaldi_fisher/v2/steps ./
     ln -s $kaldi_fisher/v2/sid ./
     ln -s $kaldi_fisher/v2/local ./
-    ln -s ../../voxceleb/nnet ./
+    ln -s ../../voxceleb/v1/nnet ./
     exit 1
 fi
 

@@ -50,7 +50,7 @@ musan=/mnt/lv10/person/liuyi/ly_database/musan/
 # The kaldi sre egs directory
 kaldi_sre=/home/heliang05/liuyi/software/kaldi_gpu/egs/sre16
 
-stage=0
+stage=6
 
 if [ $stage -le -1 ]; then
     # link the directories
@@ -60,7 +60,7 @@ if [ $stage -le -1 ]; then
     ln -s $kaldi_sre/v2/sid ./
     ln -s $kaldi_sre/v2/conf ./
     ln -s $kaldi_sre/v2/local ./
-    ln -s ../../voxceleb/nnet ./
+    ln -s ../../voxceleb/v1/nnet ./
 fi
 
 ## Data preparation
@@ -321,19 +321,19 @@ if [ $stage -le 6 ]; then
 #    $nnetdir
 
 
-  # ArcSoftmax
-  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.10_linear_bn_1e-2
-  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.10_linear_bn_1e-2.json \
-    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
-    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
-    $nnetdir
+#  # ArcSoftmax
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.10_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.10_linear_bn_1e-2.json \
+#    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+#    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+#    $nnetdir
 
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.15_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.15_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-#
+
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.20_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.20_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
@@ -345,12 +345,18 @@ if [ $stage -le 6 ]; then
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
-#
+
 #  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.30_linear_bn_1e-2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.30_linear_bn_1e-2.json \
 #    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
 #    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
 #    $nnetdir
+
+  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.35_linear_bn_1e-2
+  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.35_linear_bn_1e-2.json \
+    $data/swbd_sre_combined_nosil/train $data/swbd_sre_combined_nosil/train/spklist \
+    $data/swbd_sre_combined_nosil/valid $data/swbd_sre_combined_nosil/train/spklist \
+    $nnetdir
 
 exit 1
 fi
