@@ -247,8 +247,8 @@ class FeatureReaderV2(object):
                         # If the length is too long, clip it to #frames
                         length = num_features if length > num_features else length
                         if shuffle:
-                            # Sample a start point for phonetic training (assuming 4 frames)
-                            start = random.randint(0, length - 4)
+                            # Sample a start point for phonetic training (assuming 4 frames will be sampled).
+                            start = random.randint(0, num_features - 4)
                             if start + length > num_features:
                                 start = num_features - length
                             # The phoneic examples are at the beginning of the segments (except for the last segment).

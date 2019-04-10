@@ -21,7 +21,7 @@ vaddir=$root/mfcc
 
 export trials=$data/test/trials
 
-stage=6
+stage=3
 
 if [ $stage -le -1 ]; then
     # link the directories
@@ -79,6 +79,12 @@ if [ $stage -le 3 ]; then
 #    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
 #    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
 #    $nnetdir
+
+  nnetdir=$exp/test
+  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/test.json \
+    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
+    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
+    $nnetdir
 
 #  nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2_2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_1e-2_2.json \
@@ -219,11 +225,11 @@ if [ $stage -le 3 ]; then
 #    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
 #    $nnetdir
 
-  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.40_linear_bn_1e-2
-  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.40_linear_bn_1e-2.json \
-    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
-    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
-    $nnetdir
+#  nnetdir=$exp/xvector_nnet_tdnn_arcsoftmax_m0.40_linear_bn_1e-2
+#  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_arcsoftmax_m0.40_linear_bn_1e-2.json \
+#    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
+#    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
+#    $nnetdir
 
 
 #  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn5_att
@@ -323,7 +329,7 @@ if [ $stage -le 5 ]; then
 fi
 
 
-nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2
+nnetdir=$exp/xvector_nnet_tdnn_softmax_1e-2.bak
 checkpoint='last'
 
 if [ $stage -le 6 ]; then

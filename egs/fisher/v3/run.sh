@@ -122,14 +122,15 @@ if [ $stage -le 5 ]; then
 fi
 
 if [ $stage -le 6 ]; then
-  # train a baseline x-vector using new data (without VAD)
+  # Train a baseline x-vector using new data (without VAD)
 #  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset
 #  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax.json \
 #    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
 #    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
 #    $nnetdir
 
-  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_5
+  # Train a baseline ASR using new data (re-implement ASR with Kaldi)
+  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_5.3
   nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_5.json \
     $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
     $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \

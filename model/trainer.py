@@ -847,8 +847,13 @@ class Trainer(object):
             while True:
                 try:
                     features, labels = data_loader.fetch()
-                    valid_emb_val, valid_labels_val = self.sess.run([self.embeddings, self.valid_labels], feed_dict={self.valid_features: features,
+                    valid_emb_val, valid_labels_val, endpoints_val = self.sess.run([self.embeddings, self.valid_labels, self.endpoints], feed_dict={self.valid_features: features,
                                                                                                                      self.valid_labels: labels})
+
+                    # acc = np.sum(np.equal(np.argmax(endpoints_val['logits'], axis=1), labels, dtype=np.float)) / float(
+                    #     labels.shape[0])
+                    # print("Acc: %f" % acc)
+
                     # Save the embeddings and labels
                     if embeddings_val is None:
                         embeddings_val = valid_emb_val
@@ -864,9 +869,9 @@ class Trainer(object):
             data_loader = KaldiDataSeqQueue(data, spklist,
                                             num_parallel=2,
                                             max_qsize=10,
-                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
-                                            min_len=50,
-                                            max_len=100,
+                                            batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker*10,
+                                            min_len=self.params.min_segment_len,
+                                            max_len=self.params.max_segment_len,
                                             shuffle=True)
         elif batch_type == "end2end":
             # The num_valid_speakers_per_batch and num_valid_segments_per_speaker are only required when
@@ -886,6 +891,7 @@ class Trainer(object):
             raise ValueError
 
         data_loader.start()
+
         while True:
             try:
                 features, labels = data_loader.fetch()
@@ -895,12 +901,28 @@ class Trainer(object):
                 break
         data_loader.stop()
         loss = self.sess.run(self.valid_ops["valid_loss"])
-        tf.logging.info("Shorter segments are used to test the valid loss (50-100)")
+        tf.logging.info("Shorter segments are used to test the valid loss (%d-%d)" % (self.params.min_segment_len, self.params.max_segment_len))
         tf.logging.info("Loss: %f" % loss)
-        from model.test_utils import softmax
-        with tf.variable_scope("softmax", reuse=True):
-            test = tf.get_variable("output/kernel")
-            test_val = self.sess.run(test)
+
+
+        # while True:
+        #     try:
+        #         features, labels = data_loader.fetch()
+        #         valid_ops, endpoints_val = self.sess.run([self.valid_ops, self.endpoints], feed_dict={self.valid_features: features,
+        #                                                                                                          self.valid_labels: labels})
+        #         loss = valid_ops["valid_loss"]
+        #     except DataOutOfRange:
+        #         break
+        # data_loader.stop()
+        # tf.logging.info("Loss: %f" % loss)
+
+        acc = np.sum(np.equal(np.argmax(endpoints_val['logits'], axis=1), labels, dtype=np.float)) / float(labels.shape[0])
+        print("Acc: %f" % acc)
+
         import pdb
         pdb.set_trace()
+        # from model.test_utils import softmax
+        # with tf.variable_scope("softmax", reuse=True):
+        #     test = tf.get_variable("output/kernel")
+        #     test_val = self.sess.run(test)
         return loss, embeddings_val, labels_val
