@@ -4,15 +4,16 @@ import re
 import sys
 import time
 import numpy as np
-from model.common import l2_scaling, shape_list, prelu
+from model.common import shape_list
 from six.moves import range
-from model.multitask.pooling import statistics_pooling_v2
-from model.multitask.common import make_phone_masks
+
+from model.multitask_v1.common import make_phone_masks
 from model.loss import softmax, asoftmax, additive_margin_softmax, additive_angular_margin_softmax
 from misc.utils import substring_in_list, activation_summaries, remove_params_prefix, add_dict_prefix
 from collections import OrderedDict
 from dataset.data_loader import DataOutOfRange
 from dataset.multitask.data_loader_v2 import KaldiDataRandomQueueV2, KaldiDataSeqQueueV2
+from model.multitask_v1.tdnn import build_speaker_encoder, build_phone_encoder
 
 
 loss_network = {"softmax": softmax,
@@ -56,7 +57,7 @@ class BaseMT(object):
         self.spk_logits = None
         self.phn_embeddings = None
         self.phn_posteriors = None
-        self.phn_logits = None
+        self.phn_logits_subset = None
 
         self.endpoints = OrderedDict()
 
@@ -92,15 +93,6 @@ class BaseMT(object):
         self.global_step = tf.placeholder(tf.int64, name="global_step")
         self.params.dict["global_step"] = self.global_step
 
-        # We need to expand the features to make #posteriors == #alignments
-        # And convert to [b, 1, l, d]
-        if self.params.context_size > 0:
-            features_begin = tf.tile(tf.expand_dims(self.features[:, 0, :], axis=1), [1, self.params.context_size, 1])
-            features_end = tf.tile(tf.expand_dims(self.features[:, -1, :], axis=1), [1, self.params.context_size, 1])
-            self.expand_features = tf.expand_dims(tf.concat([features_begin, self.features, features_end], axis=1), axis=1)
-        else:
-            self.expand_features = tf.expand_dims(self.features, axis=1)
-
         # TODO: We have multiple networks. How many learning rates do we need?
         self.learning_rate = tf.placeholder(tf.float32, name="learning_rate")
 
@@ -111,13 +103,23 @@ class BaseMT(object):
         # The training statistics
         self.spk_training_count = np.zeros((num_speakers), dtype=np.int64)
         self.phn_training_count = np.zeros((num_phones), dtype=np.int64)
+        self.phn_expansion_count = np.zeros((2), dtype=np.int64)
 
-        self.relu = tf.nn.relu
-        if "network_relu_type" in params.dict:
-            if params.network_relu_type == "prelu":
-                self.relu = prelu
-            if params.network_relu_type == "lrelu":
-                self.relu = tf.nn.leaky_relu
+
+
+        # TODO: The context of the speaker and phone networks can be different.
+        # TODO: We make a hypothesis that the context of the phone network will be larger than the speaker network.
+        # TODO: If this is not true, the feature slicing should be differnet in the network building.
+        # We need to expand the features to make #posteriors == #alignments
+        # And convert to [b, 1, l, d]
+        assert(self.params.phone_left_context > self.params.speaker_left_context and
+               self.params.phone_right_context > self.params.speaker_right_context), \
+            "The speaker context is expected to be smaller than the phone context (which may be not true). " \
+            "If larger speaker context is used, change the feature expansion code."
+
+        # The loaded feautre is already expanded. Nothing to do here.
+        self.expand_features = tf.expand_dims(self.features, axis=1)
+        return
 
     def reset(self):
         """Reset the graph so we can create new input pipeline or graph. (Or for other purposes)"""
@@ -188,19 +190,24 @@ class BaseMT(object):
         assert(mode == "train" or mode == "valid" or mode == "predict")
         reuse_variables = True if self.is_built else None
 
-        # # Build the encoder and decoder.
-        # # The discriminators are built under different branches,
-        # # since the loss computation may be different during training and validation.
-        # sampled_zs, mu_zs, logvar_zs = self._build_zs_encoder(reuse_variables)
-        # sampled_zp, mu_zp, logvar_zp = self._build_zp_encoder(reuse_variables)
-        # # sampled_recon, mu_x, logvar_x = self._build_decoder(sampled_zs, sampled_zp, reuse_variables)
-
         # Create a new path for prediction, since the training may build a tower the support multi-GPUs
         if mode == "predict":
             with tf.name_scope("predict") as scope:
                 self.endpoints.clear()
-                _, _, _ = self._build_zs_encoder(reuse_variables, is_training=False)
-                _, mu_zp, _ = self._build_zp_encoder(reuse_variables, is_training=False)
+                _, _, _ = build_speaker_encoder(self.expand_features,
+                                                self.phn_labels,
+                                                self.feat_length,
+                                                self.params,
+                                                self.endpoints,
+                                                reuse_variables,
+                                                is_training=False)
+                _, mu_zp, _ = build_phone_encoder(self.expand_features,
+                                                  self.spk_labels,
+                                                  self.feat_length,
+                                                  self.params,
+                                                  self.endpoints,
+                                                  reuse_variables,
+                                                  is_training=False)
 
                 # Sometimes we need the posteriors of the phones, so we have the build the softmax layer
                 # If marginal angular softmax is used, correct the margin to compute the logits
@@ -221,7 +228,15 @@ class BaseMT(object):
                                                                                 reuse_variables=reuse_variables,
                                                                                 name="phn_softmax")
                 self.endpoints.update(add_dict_prefix(endpoints_phn_loss, "phn"))
+
+                # Try to use double float in the decoding process
+                self.endpoints["phn_logits"] = tf.cast(self.endpoints["phn_logits"], dtype=tf.float64)
+
+                # The posteriors node.
                 self.endpoints["phn_post"] = tf.nn.softmax(self.endpoints["phn_logits"], axis=-1)
+                # Compute a special log-posteriors node.
+                self.endpoints["log-output"] = tf.nn.log_softmax(self.endpoints["phn_logits"], axis=-1)
+
                 tf.logging.info("The parameters have changed. Do not train the network!")
                 if self.saver is None:
                     self.saver = tf.train.Saver()
@@ -231,8 +246,20 @@ class BaseMT(object):
             tf.logging.info("Building valid network...")
             with tf.name_scope("valid") as scope:
                 self.endpoints.clear()
-                _, mu_zs, _ = self._build_zs_encoder(reuse_variables, is_training=False)
-                _, mu_zp, _ = self._build_zp_encoder(reuse_variables, is_training=False)
+                _, mu_zs, _ = build_speaker_encoder(self.expand_features,
+                                                    self.phn_labels,
+                                                    self.feat_length,
+                                                    self.params,
+                                                    self.endpoints,
+                                                    reuse_variables,
+                                                    is_training=False)
+                _, mu_zp, _ = build_phone_encoder(self.expand_features,
+                                                  self.spk_labels,
+                                                  self.feat_length,
+                                                  self.params,
+                                                  self.endpoints,
+                                                  reuse_variables,
+                                                  is_training=False)
 
                 with tf.control_dependencies([tf.assert_equal(shape_list(mu_zp)[1], shape_list(self.phn_labels)[1])]):
                     mu_zp_subset = tf.gather_nd(mu_zp, self.phn_masks)
@@ -311,7 +338,7 @@ class BaseMT(object):
                 self.spk_embeddings = mu_zs
                 self.phn_embeddings = mu_zp
                 self.spk_logits = self.endpoints["spk_logits"]
-                self.phn_logits = self.endpoints["phn_logits"]
+                self.phn_logits_subset = self.endpoints["phn_logits"]
 
                 # TODO: define the loss
                 valid_loss = self.params.spk_loss_weight * valid_spk_loss + self.params.phn_loss_weight * valid_phn_loss
@@ -322,7 +349,7 @@ class BaseMT(object):
                                                                                 predictions=tf.argmax(self.spk_logits, axis=-1))
                 mean_valid_phn_loss, mean_valid_phn_loss_op = tf.metrics.mean(valid_phn_loss)
                 mean_valid_phn_acc, mean_valid_phn_acc_op = tf.metrics.accuracy(labels=phn_labels_subset,
-                                                                                predictions=tf.argmax(self.phn_logits, axis=-1))
+                                                                                predictions=tf.argmax(self.phn_logits_subset, axis=-1))
                 valid_ops = {"valid_loss": mean_valid_loss,
                              "valid_loss_op": mean_valid_loss_op,
                              "valid_spk_loss": mean_valid_spk_loss,
@@ -374,8 +401,20 @@ class BaseMT(object):
 
         with tf.name_scope("train") as scope:
             self.endpoints.clear()
-            _, mu_zs, _ = self._build_zs_encoder(reuse_variables, is_training=True)
-            _, mu_zp, _ = self._build_zp_encoder(reuse_variables, is_training=True)
+            _, mu_zs, _ = build_speaker_encoder(self.expand_features,
+                                                self.phn_labels,
+                                                self.feat_length,
+                                                self.params,
+                                                self.endpoints,
+                                                reuse_variables,
+                                                is_training=True)
+            _, mu_zp, _ = build_phone_encoder(self.expand_features,
+                                              self.spk_labels,
+                                              self.feat_length,
+                                              self.params,
+                                              self.endpoints,
+                                              reuse_variables,
+                                              is_training=True)
 
             with tf.control_dependencies([tf.assert_equal(shape_list(mu_zp)[1], shape_list(self.phn_labels)[1])]):
                 # The length of the outputs should be the same with the length of the alignments
@@ -494,433 +533,6 @@ class BaseMT(object):
             self.summary_writer = tf.summary.FileWriter(self.model, self.sess.graph)
         return
 
-    def _build_zs_encoder(self, reuse_variables, is_training=False):
-        """Build encoder for speaker latent variable.
-        Use the same tdnn network with x-vector.
-
-        Args:
-            reuse_variables: if true, reuse the existing variables.
-            is_training:
-        :return: sampled_zs, mu_zs, logvar_zs
-        """
-        params = self.params
-        relu = self.relu
-        features = self.expand_features
-        with tf.variable_scope("encoder", reuse=reuse_variables):
-            # Layer 1: [-2,-1,0,1,2] --> [b, 1, l-4, 512]
-            # conv2d + batchnorm + relu
-            features = tf.layers.conv2d(features,
-                                        512,
-                                        (1, 5),
-                                        activation=None,
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                            params.weight_l2_regularizer),
-                                        name='conv1')
-            self.endpoints["conv1"] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn1")
-            self.endpoints["bn1"] = features
-            features = relu(features, name='relu1')
-            self.endpoints["relu1"] = features
-
-            # Layer 2: [-2, -1, 0, 1, 2] --> [b ,1, l-4, 512]
-            # conv2d + batchnorm + relu
-            # This is slightly different with Kaldi which use dilation convolution
-            features = tf.layers.conv2d(features,
-                                        512,
-                                        (1, 5),
-                                        activation=None,
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                            params.weight_l2_regularizer),
-                                        name='conv2')
-            self.endpoints["conv2"] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn2")
-            self.endpoints["bn2"] = features
-            features = relu(features, name='relu2')
-            self.endpoints["relu2"] = features
-
-            # Layer 3: [-3, -2, -1, 0, 1, 2, 3] --> [b, 1, l-6, 512]
-            # conv2d + batchnorm + relu
-            # Still, use a non-dilation one
-            features = tf.layers.conv2d(features,
-                                        512,
-                                        (1, 7),
-                                        activation=None,
-                                        kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                            params.weight_l2_regularizer),
-                                        name='conv3')
-            self.endpoints["conv3"] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn3")
-            self.endpoints["bn3"] = features
-            features = relu(features, name='relu3')
-            self.endpoints["relu3"] = features
-
-            # Convert to [b, l, 512]
-            features = tf.squeeze(features, axis=1)
-            # The output of the 3-rd layer can simply be rank 3.
-            self.endpoints["relu3"] = features
-
-            # Layer 4: [b, l, 512] --> [b, l, 512]
-            features = tf.layers.dense(features,
-                                       512,
-                                       activation=None,
-                                       kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                           params.weight_l2_regularizer),
-                                       name="dense4")
-            self.endpoints["dense4"] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn4")
-            self.endpoints["bn4"] = features
-            features = relu(features, name='relu4')
-            self.endpoints["relu4"] = features
-
-            # Layer 5: [b, l, x]
-            if "num_nodes_pooling_layer" not in params.dict:
-                # The default number of nodes before pooling
-                params.dict["num_nodes_pooling_layer"] = 1500
-
-            features = tf.layers.dense(features,
-                                       params.num_nodes_pooling_layer,
-                                       activation=None,
-                                       kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                           params.weight_l2_regularizer),
-                                       name="dense5")
-            self.endpoints["dense5"] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn5")
-            self.endpoints["bn5"] = features
-            features = relu(features, name='relu5')
-            self.endpoints["relu5"] = features
-
-            # Pooling layer
-            # The length of utterances may be different.
-            # The original pooling use all the frames which is not appropriate for this case.
-            # So we create a new function (I don't want to change the original one).
-            if params.pooling_type == "statistics_pooling":
-                features = statistics_pooling_v2(features, self.feat_length, self.endpoints, params, is_training)
-            # elif params.pooling_type == "self_attention":
-            #     features = self_attention(features, None, self.endpoints, params, is_training)
-            else:
-                raise NotImplementedError("Not implement %s pooling" % params.pooling_type)
-            self.endpoints['pooling'] = features
-
-            # Utterance-level network
-            # Layer 6: [b, 512]
-            features = tf.layers.dense(features,
-                                       512,
-                                       activation=None,
-                                       kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                           params.weight_l2_regularizer),
-                                       name='dense6')
-            self.endpoints['dense6'] = features
-            features = tf.layers.batch_normalization(features,
-                                                     momentum=params.batchnorm_momentum,
-                                                     training=is_training,
-                                                     name="bn6")
-            self.endpoints["bn6"] = features
-            features = relu(features, name='relu6')
-            self.endpoints["relu6"] = features
-
-            # Layer 7: [b, x]
-            if "speaker_dim" not in params.dict:
-                # The default number of nodes in the last layer
-                params.dict["speaker_dim"] = 512
-
-            # We need mean and logvar.
-            mu = tf.layers.dense(features,
-                                 params.speaker_dim,
-                                 activation=None,
-                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
-                                 name="zs_dense")
-            self.endpoints['zs_mu_dense'] = mu
-
-            if "spk_last_layer_no_bn" not in params.dict:
-                params.spk_last_layer_no_bn = False
-
-            if not params.spk_last_layer_no_bn:
-                mu = tf.layers.batch_normalization(mu,
-                                                   momentum=params.batchnorm_momentum,
-                                                   training=is_training,
-                                                   name="zs_bn")
-                self.endpoints['zs_mu_bn'] = mu
-
-            if "spk_last_layer_linear" not in params.dict:
-                params.spk_last_layer_linear = False
-
-            if not params.spk_last_layer_linear:
-                mu = relu(mu, name="zs_mu_relu")
-                self.endpoints['zs_mu_relu'] = mu
-
-            # We do not compute logvar in this version.
-            # Set logvar=0 ==> var=1
-            logvar = 0
-
-            # epsilon = tf.random_normal(tf.shape(mu), name='zs_epsilon')
-            # sample = mu + tf.exp(0.5 * logvar) * epsilon
-            sample = mu
-
-            # self.endpoints['zs_mu'] = mu
-            # self.endpoints['zs_logvar'] = logvar
-            # self.endpoints['zs_sample'] = sample
-
-        return sample, mu, logvar
-
-    def _build_zp_encoder(self, reuse_variables, is_training=False):
-        """Build encoder for phone latent variable.
-        Use the tdnn and share the same structure in the lower layers.
-
-        Args:
-            reuse_variables: if true, reuse the existing variables
-            is_training:
-        :return: sampled_zs, mu_zs, logvar_zs
-        """
-        params = self.params
-        relu = self.relu
-        features = self.expand_features
-
-        # Acoustic network params:
-        # Most share 4 layers with x-vector network.
-        # [-2,2], [-2,2], [-3,3], [0], [-4,0,4]
-        # The last fully-connected layer is appended as the phonetic embedding
-        layer_size = [512, 512, 512, 512, 512]
-        kernel_size = [5, 5, 7, 1, 3]
-        dilation_size = [1, 1, 1, 1, 4]
-
-        # # Original setting
-        # layer_size = [512, 512, 512, 512, 512]
-        # kernel_size = [5, 5, 7, 1, 1]
-        # dilation_size = [1, 1, 1, 1, 1]
-        num_layers = len(kernel_size)
-
-        layer_index = 0
-
-        if params.num_shared_layers > 0:
-            # We may share the lower layers of the two tasks.
-            assert params.num_shared_layers < num_layers
-            with tf.variable_scope("encoder", reuse=True):
-                for i in range(params.num_shared_layers):
-                    if kernel_size[layer_index] > 1:
-                        if len(shape_list(features)) == 3:
-                            # Add a dummy dim to support 2d conv
-                            features = tf.expand_dims(features, axis=1)
-                        features = tf.layers.conv2d(features,
-                                                    layer_size[layer_index],
-                                                    (1, kernel_size[layer_index]),
-                                                    activation=None,
-                                                    dilation_rate=(1, dilation_size[layer_index]),
-                                                    kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                                        params.weight_l2_regularizer),
-                                                    name='conv%d' % (layer_index+1))
-                    elif kernel_size[layer_index] == 1:
-                        if len(shape_list(features)) == 4:
-                            # Remove a dummy dim to do dense layer
-                            features = tf.squeeze(features, axis=1)
-                        features = tf.layers.dense(features,
-                                                   layer_size[layer_index],
-                                                   activation=None,
-                                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                                       params.weight_l2_regularizer),
-                                                   name="dense%d" % (layer_index+1))
-
-                    features = tf.layers.batch_normalization(features,
-                                                             momentum=params.batchnorm_momentum,
-                                                             training=is_training,
-                                                             name="bn%d" % (layer_index+1))
-                    features = relu(features, name='relu%d' % (layer_index+1))
-                    layer_index += 1
-
-        with tf.variable_scope("encoder_phone", reuse=reuse_variables):
-            while layer_index < num_layers:
-                if kernel_size[layer_index] > 1:
-                    if len(shape_list(features)) == 3:
-                        features = tf.expand_dims(features, axis=1)
-                    features = tf.layers.conv2d(features,
-                                                layer_size[layer_index],
-                                                (1, kernel_size[layer_index]),
-                                                activation=None,
-                                                dilation_rate=(1, dilation_size[layer_index]),
-                                                kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                                    params.weight_l2_regularizer),
-                                                name='phn_conv%d' % (layer_index+1))
-                elif kernel_size[layer_index] == 1:
-                    if len(shape_list(features)) == 4:
-                        features = tf.squeeze(features, axis=1)
-                    features = tf.layers.dense(features,
-                                               layer_size[layer_index],
-                                               activation=None,
-                                               kernel_regularizer=tf.contrib.layers.l2_regularizer(
-                                                   params.weight_l2_regularizer),
-                                               name="phn_dense%d" % (layer_index+1))
-
-                features = tf.layers.batch_normalization(features,
-                                                         momentum=params.batchnorm_momentum,
-                                                         training=is_training,
-                                                         name="phn_bn%d" % (layer_index+1))
-                features = relu(features, name='phn_relu%d' % (layer_index+1))
-                layer_index += 1
-
-            # The last layer
-            if len(shape_list(features)) == 4:
-                features = tf.squeeze(features, axis=1)
-            if "phone_dim" not in params.dict:
-                params.dict["phone_dim"] = 512
-            mu = tf.layers.dense(features,
-                                 params.phone_dim,
-                                 activation=None,
-                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
-                                 name="zp_dense")
-            self.endpoints['zp_mu_dense'] = mu
-            mu = tf.layers.batch_normalization(mu,
-                                               momentum=params.batchnorm_momentum,
-                                               training=is_training,
-                                               name="zp_bn")
-            self.endpoints['zp_mu_bn'] = mu
-            mu = relu(mu, name='zp_mu_relu')
-            self.endpoints['zp_mu_relu'] = mu
-
-            logvar = 0
-            # epsilon = tf.random_normal(tf.shape(mu), name='zp_epsilon')
-            # sample = mu + tf.exp(0.5 * logvar) * epsilon
-            sample = mu
-
-            # # We've got the mu output
-            # self.endpoints['zp_mu'] = mu
-            # self.endpoints['zp_logvar'] = logvar
-            # self.endpoints['zp_sample'] = sample
-
-        # with tf.variable_scope("encoder_phone", reuse=reuse_variables):
-        #     features = tf.layers.conv2d(features,
-        #                                 512,
-        #                                 (1, 5),
-        #                                 activation=None,
-        #                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                     params.weight_l2_regularizer),
-        #                                 name='conv1')
-        #     self.endpoints["conv1"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn1")
-        #     self.endpoints["bn1"] = features
-        #     features = relu(features, name='relu1')
-        #     self.endpoints["relu1"] = features
-        #
-        #     features = tf.squeeze(features, axis=1)
-        #     features = tf.layers.dense(features,
-        #                                512,
-        #                                activation=None,
-        #                                kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                    params.weight_l2_regularizer),
-        #                                name="dense2")
-        #     self.endpoints["dense2"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn2")
-        #     self.endpoints["bn2"] = features
-        #     features = relu(features, name='relu2')
-        #     self.endpoints["relu2"] = features
-        #
-        #     features = tf.expand_dims(features, axis=1)
-        #
-        #     features = tf.layers.conv2d(features,
-        #                                 512,
-        #                                 (1, 5),
-        #                                 activation=None,
-        #                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                     params.weight_l2_regularizer),
-        #                                 name='conv3')
-        #     self.endpoints["conv3"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn3")
-        #     self.endpoints["bn3"] = features
-        #     features = relu(features, name='relu3')
-        #     self.endpoints["relu3"] = features
-        #
-        #     features = tf.layers.conv2d(features,
-        #                                 512,
-        #                                 (1, 7),
-        #                                 activation=None,
-        #                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                     params.weight_l2_regularizer),
-        #                                 name='conv4')
-        #     self.endpoints["conv4"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn4")
-        #     self.endpoints["bn4"] = features
-        #     features = relu(features, name='relu4')
-        #     self.endpoints["relu4"] = features
-        #
-        #     features = tf.layers.conv2d(features,
-        #                                 512,
-        #                                 (1, 7),
-        #                                 activation=None,
-        #                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                     params.weight_l2_regularizer),
-        #                                 name='conv5')
-        #     self.endpoints["conv5"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn5")
-        #     self.endpoints["bn5"] = features
-        #     features = relu(features, name='relu5')
-        #     self.endpoints["relu5"] = features
-        #
-        #     features = tf.layers.conv2d(features,
-        #                                 512,
-        #                                 (1, 7),
-        #                                 activation=None,
-        #                                 kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                     params.weight_l2_regularizer),
-        #                                 name='conv6')
-        #     self.endpoints["conv6"] = features
-        #     features = tf.layers.batch_normalization(features,
-        #                                              momentum=params.batchnorm_momentum,
-        #                                              training=is_training,
-        #                                              name="bn6")
-        #     self.endpoints["bn6"] = features
-        #     features = relu(features, name='relu6')
-        #     self.endpoints["relu6"] = features
-        #
-        #     features = tf.squeeze(features, axis=1)
-        #
-        #     mu = tf.layers.dense(features,
-        #                                512,
-        #                                activation=None,
-        #                                kernel_regularizer=tf.contrib.layers.l2_regularizer(
-        #                                    params.weight_l2_regularizer),
-        #                                name="zs_dense")
-        #     self.endpoints["zs_mu_dense"] = mu
-        #     mu = tf.layers.batch_normalization(mu,
-        #                                      momentum=params.batchnorm_momentum,
-        #                                      training=is_training,
-        #                                      name="zs_bn")
-        #     self.endpoints["zs_mu_bn"] = mu
-        #     mu = relu(mu, name='zs_mu_relu')
-        #     self.endpoints["zs_mu_relu"] = mu
-        #
-        #     logvar = 0
-        #     sample = mu
-
-        return sample, mu, logvar
-
     # def _build_decoder(self, zs, zp, recon):
     #     """Build the decoder to reconstruct features
     #
@@ -956,12 +568,17 @@ class BaseMT(object):
         if os.path.isfile(os.path.join(self.model, "checkpoint")):
             curr_step = self.load()
 
+        left_context = max(self.params.phone_left_context, self.params.speaker_left_context)
+        right_context = max(self.params.phone_right_context, self.params.speaker_right_context)
+
         # The data loader
         data_loader = KaldiDataRandomQueueV2(data_dir,
                                              ali_dir,
                                              spklist,
                                              num_parallel=self.params.num_parallel_datasets,
                                              max_qsize=self.params.max_queue_size,
+                                             left_context=left_context,
+                                             right_context=right_context,
                                              num_speakers=self.params.num_speakers_per_batch,
                                              num_segments=self.params.num_segments_per_speaker,
                                              min_len=self.params.min_segment_len,
@@ -973,9 +590,13 @@ class BaseMT(object):
         for step in range(curr_step % self.params.num_steps_per_epoch, self.params.num_steps_per_epoch):
             try:
                 # Load the data and subsample for phone loss
-                features, vad, ali, length, labels, resample = data_loader.fetch()
+                features, vad, ali, length, labels, resample, valid_pos = data_loader.fetch()
+                assert(features.shape[1] == ali.shape[1] + left_context + right_context)
                 phn_masks = make_phone_masks(length, resample, self.params.num_frames_per_utt)
-                self._training_egs_stat(labels, ali, phn_masks)
+                import pdb
+                pdb.set_trace()
+
+                self._training_egs_stat(labels, ali, valid_pos, phn_masks)
 
                 if step % self.params.save_summary_steps == 0 or step % self.params.show_training_progress == 0:
                     train_ops = [self.train_ops, self.train_op]
@@ -1043,6 +664,8 @@ class BaseMT(object):
                                              spklist,
                                              num_parallel=self.params.num_parallel_datasets,
                                              max_qsize=self.params.max_queue_size,
+                                             left_context=max(self.params.phone_left_context, self.params.speaker_left_context),
+                                             right_context=max(self.params.phone_right_context, self.params.speaker_right_context),
                                              num_speakers=self.params.num_speakers_per_batch,
                                              num_segments=self.params.num_segments_per_speaker,
                                              min_len=self.params.min_segment_len,
@@ -1063,7 +686,7 @@ class BaseMT(object):
         for step in range(tune_period * tune_times):
             lr = init_learning_rate * (factor ** (step // tune_period))
             try:
-                features, vad, ali, length, labels, resample = data_loader.fetch()
+                features, vad, ali, length, labels, resample, valid_pos = data_loader.fetch()
                 phn_masks = make_phone_masks(length, resample, self.params.num_frames_per_utt)
 
                 if step % tune_period == 0:
@@ -1134,6 +757,9 @@ class BaseMT(object):
         labels_val = None
         num_batches = 0
 
+        left_context = max(self.params.phone_left_context, self.params.speaker_left_context)
+        right_context = max(self.params.phone_right_context, self.params.speaker_right_context)
+
         if output_embeddings:
             # If we want to output embeddings, the features should be loaded in order
             data_loader = KaldiDataSeqQueueV2(data_dir,
@@ -1141,6 +767,8 @@ class BaseMT(object):
                                               spklist,
                                               num_parallel=2,
                                               max_qsize=10,
+                                              left_context=left_context,
+                                              right_context=right_context,
                                               batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
                                               min_len=self.params.min_segment_len,
                                               max_len=self.params.max_segment_len,
@@ -1154,9 +782,10 @@ class BaseMT(object):
                 try:
                     if num_batches % 100 == 0:
                         tf.logging.info("valid step: %d" % num_batches)
-                    features, vad, ali, length, labels, resample = data_loader.fetch()
+                    features, vad, ali, length, labels, resample, valid_pos = data_loader.fetch()
                     valid_emb_val = self.sess.run(self.spk_embeddings, feed_dict={self.features: features,
-                                                                                  self.feat_length: length})
+                                                                                  self.feat_length: length,
+                                                                                  self.phn_labels: ali})
                     # Save the embeddings and labels
                     if embeddings_val is None:
                         embeddings_val = valid_emb_val
@@ -1175,6 +804,8 @@ class BaseMT(object):
                                               spklist,
                                               num_parallel=2,
                                               max_qsize=10,
+                                              left_context=left_context,
+                                              right_context=right_context,
                                               batch_size=self.params.num_speakers_per_batch * self.params.num_segments_per_speaker,
                                               min_len=self.params.min_segment_len,
                                               max_len=self.params.max_segment_len,
@@ -1190,6 +821,8 @@ class BaseMT(object):
                                                  spklist,
                                                  num_parallel=2,
                                                  max_qsize=10,
+                                                 left_context=left_context,
+                                                 right_context=right_context,
                                                  num_speakers=self.params.num_valid_speakers_per_batch,
                                                  num_segments=self.params.num_valid_segments_per_speaker,
                                                  min_len=self.params.min_segment_len,
@@ -1204,8 +837,9 @@ class BaseMT(object):
             try:
                 if num_batches % 100 == 0:
                     tf.logging.info("valid step: %d" % num_batches)
-                features, vad, ali, length, labels, resample = data_loader.fetch()
-                phn_masks = make_phone_masks(length, resample, self.params.num_frames_per_utt)
+                features, vad, ali, length, labels, resample, valid_pos = data_loader.fetch()
+                # phn_masks = make_phone_masks(length, resample, self.params.num_frames_per_utt)
+                phn_masks = make_phone_masks(length, resample, -1)
                 valid_ops = [self.valid_ops["valid_loss_op"],
                              self.valid_ops["valid_spk_loss_op"],
                              self.valid_ops["valid_phn_loss_op"],
@@ -1237,15 +871,17 @@ class BaseMT(object):
         # The output embeddings and labels can be used to compute EER or other metrics
         return loss, embeddings_val, labels_val
 
-    def predict(self, node, features, ali, length):
-        """Output the embedding of the specified node
+    def predict_speaker(self, node, features, ali, length):
+        """Output the speaker-related embedding of the specified node
+
+        We may use ali when inferring the speaker embeddings.
 
         Args:
             node: The node of the network.
             features: A matrix which could be [l, d] or [b, l, d]
             ali: The alignment. [l], [b, l]
             length: The length of each segment. [1] or [b]
-        :return: A numpy array which is the embeddings
+        :return: A numpy array which is the embeddings. [d] or [b, d]
         """
         curr_step = 0
         if not self.is_loaded:
@@ -1261,6 +897,12 @@ class BaseMT(object):
             features = np.expand_dims(features, axis=0)
             ali = np.expand_dims(ali, axis=0)
 
+        # Feature expansion
+        left_context = max(self.params.phone_left_context, self.params.speaker_left_context)
+        right_context = max(self.params.phone_right_context, self.params.speaker_right_context)
+        features = np.concatenate([np.tile(features[:, 0, :], [1, left_context, 1]), features,
+                                   np.tile(features[:, -1, :], [1, right_context, 1])], axis=1)
+
         embeddings = self.sess.run(self.endpoints[node], feed_dict={self.features: features,
                                                                     self.phn_labels: ali,
                                                                     self.feat_length: length,
@@ -1273,12 +915,48 @@ class BaseMT(object):
             embeddings = np.squeeze(embeddings, axis=0)
         return embeddings
 
-    def _training_egs_stat(self, labels, ali, phn_masks):
+    def predict_phone(self, node, features, length):
+        """Output the phone-related embedding of the specified node.
+        Also used for log-output (posterior)
+
+        Args:
+            node: The node of the network.
+            features: A matrix which could be [l, d] or [b, l, d]
+            length: The length of each segment. [1] or [b]
+        :return: A numpy array. [l, d] or [b, l, d]
+        """
+        curr_step = 0
+        if not self.is_loaded:
+            if os.path.isfile(os.path.join(self.model, "checkpoint")):
+                curr_step = self.load()
+            else:
+                sys.exit("Cannot find model in %s" % self.model)
+        rank = len(features.shape)
+        assert (rank == 2 or rank == 3)
+        # Expand the feature if the rank is 2
+        if rank == 2:
+            features = np.expand_dims(features, axis=0)
+
+        # Feature expansion
+        left_context = max(self.params.phone_left_context, self.params.speaker_left_context)
+        right_context = max(self.params.phone_right_context, self.params.speaker_right_context)
+        features = np.concatenate([np.tile(features[:, 0, :], [1, left_context, 1]), features,
+                                   np.tile(features[:, -1, :], [1, right_context, 1])], axis=1)
+
+        embeddings = self.sess.run(self.endpoints[node], feed_dict={self.features: features,
+                                                                    self.feat_length: length,
+                                                                    self.global_step: curr_step})
+        if rank == 2:
+            embeddings = np.squeeze(embeddings, axis=0)
+        return embeddings
+
+    def _training_egs_stat(self, labels, ali, pos, phn_masks):
         """Compute the statistics of the training, i.e. the count of speakers and phones selected.
 
         Args:
             labels: The batch speaker labels
             ali: The batch phone labels (alignments)
+            pos: [start, end]. If the start <= index < end, it can be inferred w/o feature expansion
             phn_masks: The masks to choose the alignments.
         :return: Save the statistics in self.spk_training_count, self.phn_training_count
         """
@@ -1287,6 +965,10 @@ class BaseMT(object):
             self.spk_training_count[k] += 1
         for k in phn_masks:
             self.phn_training_count[ali[k[0], k[1]]] += 1
+            if pos[k[0], 0] <= k[1] < pos[k[0], 1]:
+                self.phn_expansion_count[0] += 1
+            else:
+                self.phn_expansion_count[1] += 1
 
     def _print_egs_stat(self):
         total_spk_egs = np.sum(self.spk_training_count)
@@ -1298,6 +980,12 @@ class BaseMT(object):
         per_phone = self.phn_training_count * 100.0 / total_phn_egs
         tf.logging.info("The min phone %d has %.4f%% training egs, and the max phone %d has %.4f%%" % (
             np.argmin(per_phone), np.min(per_phone), np.argmax(per_phone), np.max(per_phone)))
+
+        total_frames = np.sum(self.phn_expansion_count)
+        assert(total_frames == total_phn_egs)
+        tf.logging.info("There are %.4f%% frames can be inferred w/o feature expansion, %.4f%% with feature expansion" %
+                        (self.phn_expansion_count[0] * 100.0 / total_phn_egs,
+                         self.phn_expansion_count[1] * 100.0 / total_phn_egs))
 
     def _save_egs_stat(self):
         fp_spk = open(os.path.join(self.model, "speaker_egs"), "w")

@@ -50,17 +50,18 @@ musan=/mnt/lv10/person/liuyi/ly_database/musan/
 # The kaldi sre egs directory
 kaldi_sre=/home/heliang05/liuyi/software/kaldi_gpu/egs/sre16
 
-stage=6
+stage=-1
 
 if [ $stage -le -1 ]; then
     # link the directories
-    rm -fr utils steps sid conf local
+    rm -fr utils steps sid conf local nnet
     ln -s $kaldi_sre/v2/utils ./
     ln -s $kaldi_sre/v2/steps ./
     ln -s $kaldi_sre/v2/sid ./
     ln -s $kaldi_sre/v2/conf ./
     ln -s $kaldi_sre/v2/local ./
     ln -s ../../voxceleb/v1/nnet ./
+    exit 1
 fi
 
 ## Data preparation

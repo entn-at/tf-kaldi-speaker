@@ -95,10 +95,16 @@ def save_codes_and_config(cont, model, config):
                 shutil.move(os.path.join(model, "codes"), os.path.join(model, ".backup/"))
             if os.path.exists(os.path.join(model, "nnet")):
                 shutil.move(os.path.join(model, "nnet"), os.path.join(model, ".backup/"))
+            # if os.path.exists(os.path.join(model, "log")):
+            #     copy_tree(os.path.join(model, "log"), os.path.join(model, ".backup/"))
+            if os.path.exists(os.path.join(model, "lib")):
+                shutil.move(os.path.join(model, "lib"), os.path.join(model, ".backup/"))
 
         # `model/codes` is used to save the codes and `model/nnet` is used to save the model and configuration
         if os.path.isdir(os.path.join(model, "codes")):
             shutil.rmtree(os.path.join(model, "codes"))
+        if os.path.isdir(os.path.join(model, "lib")):
+            shutil.rmtree(os.path.join(model, "lib"))
         os.makedirs(os.path.join(model, "codes"))
 
         # We need to set the home directory of the tf-kaldi-speaker (TF_KALDI_ROOT).
@@ -108,6 +114,7 @@ def save_codes_and_config(cont, model, config):
         copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "dataset"), os.path.join(model, "codes/dataset/"))
         copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "model"), os.path.join(model, "codes/model/"))
         copy_tree(os.path.join(os.environ['TF_KALDI_ROOT'], "misc"), os.path.join(model, "codes/misc/"))
+        copy_tree(os.path.join(os.getcwd(), "nnet/lib"), os.path.join(model, "lib"))
         if not os.path.isdir(os.path.join(model, "nnet")):
             os.makedirs(os.path.join(model, "nnet"))
         shutil.copyfile(config, os.path.join(model, "nnet", "config.json"))

@@ -37,18 +37,20 @@ def sample_with_probability(rd, candidates, num_selects, regions):
 
 
 def batch_random_v2(stop_event,
-                 queue,
-                 data_dir,
-                 ali_dir,
-                 spk2features,
-                 spk2num_frames,
-                 utt2num_frames,
-                 num_speakers=10,
-                 num_segments=10,
-                 min_len=200,
-                 max_len=400,
-                 shuffle=True,
-                 seed=0):
+                    queue,
+                    data_dir,
+                    ali_dir,
+                    spk2features,
+                    spk2num_frames,
+                    utt2num_frames,
+                    left_context,
+                    right_context,
+                    num_speakers=10,
+                    num_segments=10,
+                    min_len=200,
+                    max_len=400,
+                    shuffle=True,
+                    seed=0):
     """Load features and fill a queue. Used in KaldiDataRandomQueue
 
     Args:
@@ -69,7 +71,7 @@ def batch_random_v2(stop_event,
     rd = random.Random(os.urandom(4))
     rd.jumpahead(seed)
 
-    feature_reader = FeatureReaderV2(data_dir, ali_dir)
+    feature_reader = FeatureReaderV2(data_dir, ali_dir, left_context, right_context)
     speakers = list(spk2features.keys())
 
     total_num_frames = np.sum(spk2num_frames.values())
@@ -91,17 +93,20 @@ def batch_random_v2(stop_event,
     while not stop_event.is_set():
         batch_speakers = sample_with_probability(rd, speakers, num_speakers, spk_sample_region)
         batch_length = rd.randint(min_len, max_len)
-        features = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
+        # The feature should be expanded
+        features = np.zeros((num_speakers * num_segments, batch_length + left_context + right_context, feature_reader.dim), dtype=np.float32)
+        # The other variables still have the original length
         vad = np.zeros((num_speakers * num_segments, batch_length), dtype=np.float32)
         ali = np.zeros((num_speakers * num_segments, batch_length), dtype=np.int32)
         labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
-        length = np.zeros((num_speakers * num_segments), dtype=np.int32)
+        valid_length = np.zeros((num_speakers * num_segments), dtype=np.int32)
+        # valid_pos is [start, end) position that the forward will use the `true` features, rather than the expansion
+        # This is used for logging
+        valid_pos = np.zeros((num_speakers * num_segments, 2), dtype=np.int32)
         # resample indicates whether we should sample the segment to find a phonetic training example
         # or just use the beginning of the segment.
         # Useful when training a network.
         resample = np.zeros((num_speakers * num_segments), dtype=np.int32)
-        # # debug
-        # selected = []
 
         for i, speaker in enumerate(batch_speakers):
             spk = speaker
@@ -112,18 +117,22 @@ def batch_random_v2(stop_event,
             batch_segments = sample_with_probability(rd, spk2features[spk], num_segments, spk2utt_sample_region[spk])
             for j, utt in enumerate(batch_segments):
                 utt_feat, utt_vad, utt_ali, utt_start = feature_reader.read_segment(utt, batch_length, shuffle=shuffle)
-                utt_length = utt_feat.shape[0]
-                features[i * num_segments + j, :utt_length, :] = utt_feat
+                # utt_length is the valid length before feature expansion.
+                # The valid length excludes the expanded features.
+                utt_length = utt_feat.shape[0] - left_context - right_context
+                features[i * num_segments + j, :utt_feat.shape[0], :] = utt_feat
                 # Expand the feature by the last frame if the length is not long enough.
+                # (Though this is not necessary...)
                 if utt_length < batch_length:
-                    features[i * num_segments + j, utt_length:, :] = features[i * num_segments + j, utt_length-1, :]
+                    features[i * num_segments + j, utt_feat.shape[0]:, :] = features[i * num_segments + j, utt_feat.shape[0]-1, :]
                 vad[i * num_segments + j, :utt_length] = utt_vad
                 ali[i * num_segments + j, :utt_length] = utt_ali
-                length[i * num_segments + j] = utt_length
+                valid_length[i * num_segments + j] = utt_length
                 resample[i * num_segments + j] = 1 if utt_start + utt_length == utt2num_frames[utt] else 0
-                # # debug
-                # selected.append([spk, utt, utt_start])
-        queue.put((features, vad, ali, length, labels, resample))
+                valid_pos[i * num_segments + j, 0] = left_context - utt_start if left_context > utt_start else 0
+                valid_pos[i * num_segments + j, 1] = utt2num_frames[utt] - utt_start - right_context \
+                    if utt_start + utt_length > utt2num_frames[utt] - right_context else utt_length
+        queue.put((features, vad, ali, valid_length, labels, resample, valid_pos))
 
     time.sleep(3)
     while not queue.empty():
@@ -142,6 +151,8 @@ class KaldiDataRandomQueueV2(object):
                  spklist,
                  num_parallel=1,
                  max_qsize=10,
+                 left_context=None,
+                 right_context=None,
                  num_speakers=None,
                  num_segments=None,
                  min_len=None,
@@ -157,6 +168,8 @@ class KaldiDataRandomQueueV2(object):
             spklist: The spklist tells the mapping from the speaker name to the speaker id.
             num_parallel: The number of threads to read features.
             max_qsize: The capacity of the queue
+            left_context: The left context to expand the feature
+            right_context: The right context to expand the feature
             num_speakers: The number of speakers per batch.
             num_segments: The number of semgents per speaker.
               batch_size = num_speakers * num_segments
@@ -175,6 +188,8 @@ class KaldiDataRandomQueueV2(object):
         self.max_len = max_len
         self.num_parallel_datasets = num_parallel
         self.shuffle = shuffle
+        self.left_context = left_context
+        self.right_context = right_context
 
         # We process the data directory and fetch speaker information.
         self.spk2features, self.features2spk, spk2index = get_speaker_info(data_dir, spklist)
@@ -250,6 +265,8 @@ class KaldiDataRandomQueueV2(object):
                                                                 self.spk2features,
                                                                 self.spk2num_frames,
                                                                 self.utt2num_frames,
+                                                                self.left_context,
+                                                                self.right_context,
                                                                 self.num_speakers,
                                                                 self.num_segments,
                                                                 self.min_len,
@@ -288,6 +305,8 @@ def batch_sequence_v2(stop_event,
                       ali_dir,
                       feature_list,
                       features2spk,
+                      left_context,
+                      right_context,
                       batch_size=128,
                       min_len=200,
                       max_len=400,
@@ -302,6 +321,8 @@ def batch_sequence_v2(stop_event,
         ali_dir: The kaldi ali directory.
         feature_list: A list shows which features the process should read.
         features2spk: A dict map features to speaker index.
+        left_context: The left context.
+        right_context: The right context.
         batch_size: The batch_size
         min_len: The minimum length of the features.
         max_len: The maximum length of the features.
@@ -312,7 +333,7 @@ def batch_sequence_v2(stop_event,
     rd = random.Random(os.urandom(4))
     rd.jumpahead(seed)
 
-    feature_reader = FeatureReaderV2(data_dir, ali_dir)
+    feature_reader = FeatureReaderV2(data_dir, ali_dir, left_context, right_context)
     num_batches = int(len(feature_list) / batch_size)
     for i in range(num_batches):
         batch_length = rd.randint(min_len, max_len)
@@ -322,25 +343,31 @@ def batch_sequence_v2(stop_event,
             if feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]] < batch_length:
                 batch_length = feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]]
 
-        features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
+        # Feature expansion is applied.
+        features = np.zeros((batch_size, batch_length + left_context + right_context, feature_reader.dim), dtype=np.float32)
         vad = np.zeros((batch_size, batch_length), dtype=np.float32)
         ali = np.zeros((batch_size, batch_length), dtype=np.int32)
         labels = np.zeros((batch_size), dtype=np.int32)
-        length = np.zeros((batch_size), dtype=np.int32)
+        valid_length = np.zeros((batch_size), dtype=np.int32)
         resample = np.zeros((batch_size), dtype=np.int32)
+        valid_pos = np.zeros((batch_size, 2), dtype=np.int32)
         for j in range(batch_size):
             utt_feat, utt_vad, utt_ali, utt_start = feature_reader.read_segment(feature_list[i * batch_size + j], batch_length, shuffle=shuffle)
             labels[j] = features2spk[feature_list[i * batch_size + j]]
-            utt_length = utt_feat.shape[0]
-            features[j, :utt_length, :] = utt_feat
+            utt_length = utt_feat.shape[0] - left_context - right_context
+            features[j, :utt_feat.shape[0], :] = utt_feat
             # Expand the feature by the last frame if the length is not long enough.
             if utt_length < batch_length:
-                features[j, utt_length:, :] = features[j, utt_length - 1, :]
+                features[j, utt_feat.shape[0]:, :] = features[j, utt_feat.shape[0] - 1, :]
             vad[j, :utt_length] = utt_vad
             ali[j, :utt_length] = utt_ali
-            length[j] = utt_length
+            valid_length[j] = utt_length
             resample[j] = 1 if utt_start + utt_length == feature_reader.utt2num_frames[feature_list[i * batch_size + j]] else 0
-        queue.put((features, vad, ali, length, labels, resample))
+            valid_pos[j, 0] = left_context - utt_start if left_context > utt_start else 0
+            valid_pos[j, 1] = feature_reader.utt2num_frames[feature_list[i * batch_size + j]] - utt_start - right_context \
+                if utt_start + utt_length > feature_reader.utt2num_frames[feature_list[i * batch_size + j]] - right_context else utt_length
+
+        queue.put((features, vad, ali, valid_length, labels, resample, valid_pos))
     stop_event.set()
     print("The process {} is about to exit.".format(os.getpid()))
     return
@@ -354,6 +381,8 @@ class KaldiDataSeqQueueV2(object):
                  spklist,
                  num_parallel=1,
                  max_qsize=10,
+                 left_context=None,
+                 right_context=None,
                  batch_size=128,
                  min_len=None,
                  max_len=None,
@@ -380,6 +409,8 @@ class KaldiDataSeqQueueV2(object):
         self.max_len = max_len
         self.num_parallel_datasets = num_parallel
         self.shuffle = shuffle
+        self.left_context = left_context
+        self.right_context = right_context
 
         # We process the data directory and fetch speaker information.
         self.spk2features, self.features2spk, spk2index = get_speaker_info(data_dir, spklist)
@@ -444,6 +475,8 @@ class KaldiDataSeqQueueV2(object):
                                                                   self.ali_dir,
                                                                   self.sub_feature_list[i],
                                                                   self.features2spk,
+                                                                  self.left_context,
+                                                                  self.right_context,
                                                                   self.batch_size,
                                                                   self.min_len,
                                                                   self.max_len,
@@ -476,15 +509,18 @@ class KaldiDataSeqQueueV2(object):
 
 
 if __name__ == "__main__":
-    data_dir = "/home/heliang05/liuyi/fisher.full/data/train_background_hires_filtered"
+    data_dir = "/home/heliang05/liuyi/fisher.full/data/train_background_hires_multitask/train"
     ali_dir = "/home/heliang05/liuyi/fisher.full/exp/tri5a_ali_3k"
-    spklist = "/home/heliang05/liuyi/fisher.full/data/train_background_hires_filtered/spklist"
+    spklist = "/home/heliang05/liuyi/fisher.full/data/train_background_hires_multitask/train/spklist"
     num_speakers = 64
     num_segments = 1
-    min_len = 25
-    max_len = 25
+    min_len = 100
+    max_len = 300
     num_parallel_datasets = 1
     shuffle = True
+    left_context = 20
+    right_context = 20
+    seed = 1
 
     batch_size = num_speakers * num_segments
     import pdb
@@ -516,9 +552,9 @@ if __name__ == "__main__":
                                                         os.path.join(ali_dir, "tree"), shell=True))
 
     rd = random.Random(os.urandom(4))
-    rd.jumpahead(1)
+    rd.jumpahead(seed)
 
-    feature_reader = FeatureReaderV2(data_dir, ali_dir)
+    feature_reader = FeatureReaderV2(data_dir, ali_dir, left_context, right_context)
     speakers = list(spk2features.keys())
 
     total_num_frames = np.sum(spk2num_frames.values())
@@ -539,11 +575,14 @@ if __name__ == "__main__":
 
     batch_speakers = sample_with_probability(rd, speakers, num_speakers, spk_sample_region)
     batch_length = rd.randint(min_len, max_len)
-    features = np.zeros((num_speakers * num_segments, batch_length, feature_reader.dim), dtype=np.float32)
+    # The feature should be expanded
+    features = np.zeros((num_speakers * num_segments, batch_length + left_context + right_context, feature_reader.dim), dtype=np.float32)
+    # The other variables still have the original length
     vad = np.zeros((num_speakers * num_segments, batch_length), dtype=np.float32)
     ali = np.zeros((num_speakers * num_segments, batch_length), dtype=np.int32)
     labels = np.zeros((num_speakers * num_segments), dtype=np.int32)
-    length = np.zeros((num_speakers * num_segments), dtype=np.int32)
+    valid_length = np.zeros((num_speakers * num_segments), dtype=np.int32)
+    valid_pos = np.zeros((num_speakers * num_segments, 2), dtype=np.int32)
     # resample indicates whether we should sample the segment to find a phonetic training example
     # or just use the beginning of the segment.
     # Useful when training a network.
@@ -558,95 +597,124 @@ if __name__ == "__main__":
         batch_segments = sample_with_probability(rd, spk2features[spk], num_segments, spk2utt_sample_region[spk])
         for j, utt in enumerate(batch_segments):
             utt_feat, utt_vad, utt_ali, utt_start = feature_reader.read_segment(utt, batch_length, shuffle=shuffle)
-            utt_length = utt_feat.shape[0]
-            features[i * num_segments + j, :utt_length, :] = utt_feat
+            # utt_length is the valid length before feature expansion.
+            # The valid length excludes the expanded features.
+            utt_length = utt_feat.shape[0] - left_context - right_context
+            features[i * num_segments + j, :utt_feat.shape[0], :] = utt_feat
             # Expand the feature by the last frame if the length is not long enough.
+            # (Though this is not necessary...)
             if utt_length < batch_length:
-                features[i * num_segments + j, utt_length:, :] = features[i * num_segments + j, utt_length - 1, :]
+                features[i * num_segments + j, utt_feat.shape[0]:, :] = features[i * num_segments + j, utt_feat.shape[0]-1, :]
             vad[i * num_segments + j, :utt_length] = utt_vad
             ali[i * num_segments + j, :utt_length] = utt_ali
-            length[i * num_segments + j] = utt_length
+            valid_length[i * num_segments + j] = utt_length
             resample[i * num_segments + j] = 1 if utt_start + utt_length == utt2num_frames[utt] else 0
+            valid_pos[i * num_segments + j, 0] = left_context - utt_start if left_context > utt_start else 0
+            valid_pos[i * num_segments + j, 1] = utt2num_frames[utt] - utt_start - right_context \
+                if utt_start + utt_length > utt2num_frames[utt] - right_context else utt_length
+
     pdb.set_trace()
 
-    # # We process the data directory and fetch speaker information.
-    # spk2features, features2spk, spk2index = get_speaker_info(data_dir, spklist)
-    # num_total_speakers = len(list(spk2index.keys()))
-    # num_total_phones = int(
-    #     subprocess.check_output("tree-info %s | grep num-pdfs | awk '{print $2}'" % os.path.join(ali_dir, "tree"),
-    #                             shell=True))
-    #
-    # # Restore the relation of utt and spk. That's annoying...
-    # spk2features_new = {}
-    # for spk in spk2features:
-    #     spk2features_new[spk] = []
-    #     for utt in spk2features[spk]:
-    #         spk2features_new[spk].append(utt.split(" ")[0])
-    # spk2features = spk2features_new
-    #
-    # features2spk_new = {}
-    # for utt in features2spk:
-    #     features2spk_new[utt.split(" ")[0]] = features2spk[utt]
-    # features2spk = features2spk_new
-    #
-    # # Arrange features in sequence
-    # feature_list = list(features2spk.keys())
-    # if shuffle:
-    #     random.shuffle(feature_list)
-    #
-    # sub_feature_list = []
-    # num_sub_features = len(feature_list) / 1
-    # for i in range(1):
-    #     if i == 1 - 1:
-    #         sub_feature_list.append(feature_list[i * num_sub_features:])
-    #     else:
-    #         sub_feature_list.append(feature_list[i * num_sub_features:(i + 1) * num_sub_features])
-    #
-    # rd = random.Random(os.urandom(4))
-    # rd.jumpahead(1)
-    #
-    # feature_reader = FeatureReaderV2(data_dir, ali_dir)
-    # num_batches = int(len(feature_list) / batch_size)
-    # for i in range(1):
-    #     batch_length = rd.randint(min_len, max_len)
-    #     # In some cases, the minimum length of the utterances is smaller than the batch length.
-    #     # Use the smallest length as the real batch length.
-    #     for j in range(batch_size):
-    #         if feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]] < batch_length:
-    #             batch_length = feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]]
-    #
-    #     features = np.zeros((batch_size, batch_length, feature_reader.dim), dtype=np.float32)
-    #     vad = np.zeros((batch_size, batch_length), dtype=np.float32)
-    #     ali = np.zeros((batch_size, batch_length), dtype=np.int32)
-    #     labels = np.zeros((batch_size), dtype=np.int32)
-    #     length = np.zeros((batch_size), dtype=np.int32)
-    #     resample = np.zeros((batch_size), dtype=np.int32)
-    #     for j in range(batch_size):
-    #         utt_feat, utt_vad, utt_ali, utt_start = feature_reader.read_segment(feature_list[i * batch_size + j],
-    #                                                                             batch_length, shuffle=shuffle)
-    #         labels[j] = features2spk[feature_list[i * batch_size + j]]
-    #         utt_length = utt_feat.shape[0]
-    #         features[j, :utt_length, :] = utt_feat
-    #         # Expand the feature by the last frame if the length is not long enough.
-    #         if utt_length < batch_length:
-    #             features[j, utt_length:, :] = features[j, utt_length - 1, :]
-    #         vad[j, :utt_length] = utt_vad
-    #         ali[j, :utt_length] = utt_ali
-    #         length[j] = utt_length
-    #         resample[j] = 1 if utt_start + utt_length == feature_reader.utt2num_frames[
-    #             feature_list[i * batch_size + j]] else 0
-    # pdb.set_trace()
-    #
-    # feat_reader = KaldiDataRandomQueueV2(data_dir, ali_dir, spklist, num_speakers=num_speakers, num_segments=num_segments, min_len=min_len, max_len=max_len, shuffle=True)
-    # feat_reader.start()
-    # test = feat_reader.fetch()
-    # feat_reader.stop()
-    # pdb.set_trace()
-    # print(test)
-    #
-    # feat_reader = KaldiDataSeqQueueV2(data_dir, ali_dir, spklist, num_parallel=num_parallel_datasets, batch_size=batch_size, min_len=min_len, max_len=max_len, shuffle=shuffle)
-    # feat_reader.start()
-    # test = feat_reader.fetch()
-    # feat_reader.stop()
-    # pdb.set_trace()
-    # print(test)
+    # We process the data directory and fetch speaker information.
+    spk2features, features2spk, spk2index = get_speaker_info(data_dir, spklist)
+    num_total_speakers = len(list(spk2index.keys()))
+    num_total_phones = int(
+        subprocess.check_output("tree-info %s | grep num-pdfs | awk '{print $2}'" % os.path.join(ali_dir, "tree"),
+                                shell=True))
+
+    # Restore the relation of utt and spk. That's annoying...
+    spk2features_new = {}
+    for spk in spk2features:
+        spk2features_new[spk] = []
+        for utt in spk2features[spk]:
+            spk2features_new[spk].append(utt.split(" ")[0])
+    spk2features = spk2features_new
+
+    features2spk_new = {}
+    for utt in features2spk:
+        features2spk_new[utt.split(" ")[0]] = features2spk[utt]
+    features2spk = features2spk_new
+
+    # Arrange features in sequence
+    feature_list = list(features2spk.keys())
+    if shuffle:
+        random.shuffle(feature_list)
+
+    sub_feature_list = []
+    num_sub_features = len(feature_list) / 1
+    for i in range(1):
+        if i == 1 - 1:
+            sub_feature_list.append(feature_list[i * num_sub_features:])
+        else:
+            sub_feature_list.append(feature_list[i * num_sub_features:(i + 1) * num_sub_features])
+
+    rd = random.Random(os.urandom(4))
+    rd.jumpahead(seed)
+
+    feature_reader = FeatureReaderV2(data_dir, ali_dir, left_context, right_context)
+    num_batches = int(len(feature_list) / batch_size)
+
+    batch_length = rd.randint(min_len, max_len)
+    # In some cases, the minimum length of the utterances is smaller than the batch length.
+    # Use the smallest length as the real batch length.
+    for j in range(batch_size):
+        if feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]] < batch_length:
+            batch_length = feature_reader.utt2num_frames[feature_list[i * batch_size + j].split(' ')[0]]
+
+    # Feature expansion is applied.
+    features = np.zeros((batch_size, batch_length + left_context + right_context, feature_reader.dim),
+                        dtype=np.float32)
+    vad = np.zeros((batch_size, batch_length), dtype=np.float32)
+    ali = np.zeros((batch_size, batch_length), dtype=np.int32)
+    labels = np.zeros((batch_size), dtype=np.int32)
+    valid_length = np.zeros((batch_size), dtype=np.int32)
+    resample = np.zeros((batch_size), dtype=np.int32)
+    valid_pos = np.zeros((batch_size, 2), dtype=np.int32)
+    i = 0
+    for j in range(batch_size):
+        utt_feat, utt_vad, utt_ali, utt_start = feature_reader.read_segment(feature_list[i * batch_size + j],
+                                                                            batch_length, shuffle=shuffle)
+        labels[j] = features2spk[feature_list[i * batch_size + j]]
+        utt_length = utt_feat.shape[0] - left_context - right_context
+        features[j, :utt_feat.shape[0], :] = utt_feat
+        # Expand the feature by the last frame if the length is not long enough.
+        if utt_length < batch_length:
+            features[j, utt_feat.shape[0]:, :] = features[j, utt_feat.shape[0] - 1, :]
+        vad[j, :utt_length] = utt_vad
+        ali[j, :utt_length] = utt_ali
+        valid_length[j] = utt_length
+        resample[j] = 1 if utt_start + utt_length == feature_reader.utt2num_frames[
+            feature_list[i * batch_size + j]] else 0
+        valid_pos[j, 0] = left_context - utt_start if left_context > utt_start else 0
+        valid_pos[j, 1] = feature_reader.utt2num_frames[feature_list[i * batch_size + j]] - utt_start - right_context \
+            if utt_start + utt_length > feature_reader.utt2num_frames[
+            feature_list[i * batch_size + j]] - right_context else utt_length
+
+    pdb.set_trace()
+
+    feat_reader = KaldiDataRandomQueueV2(data_dir, ali_dir, spklist,
+                                         left_context=left_context,
+                                         right_context=right_context,
+                                         num_speakers=num_speakers,
+                                         num_segments=num_segments,
+                                         min_len=min_len,
+                                         max_len=max_len,
+                                         shuffle=True)
+    feat_reader.start()
+    test = feat_reader.fetch()
+    feat_reader.stop()
+    pdb.set_trace()
+    print(test)
+
+    feat_reader = KaldiDataSeqQueueV2(data_dir, ali_dir, spklist,
+                                      left_context=left_context,
+                                      right_context=right_context,
+                                      batch_size=batch_size,
+                                      min_len=min_len,
+                                      max_len=max_len,
+                                      shuffle=shuffle)
+    feat_reader.start()
+    test = feat_reader.fetch()
+    feat_reader.stop()
+    pdb.set_trace()
+    print(test)

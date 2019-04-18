@@ -327,15 +327,30 @@ def compute_self_attention(value, key, query, params):
         att: The output of the attention layer.
         penalty_term: The penalty term of the attention layer.
     """
-    batch, length, dim = key.shape
-    dim = value.shape[-1]
+    batch, length, value_dim = value.shape
+    key_dim = key.shape[-1]
     n_heads = query.shape[0]
+
+    # We need to split the value
+    value = np.transpose(np.reshape(value, [batch, length, n_heads, value_dim/n_heads]), [0,2,1,3])
+    if params.att_split_key:
+        key = np.transpose(np.reshape(key, [batch, length, n_heads, key_dim/n_heads]), [0,2,1,3])
+    else:
+        key = np.expand_dims(key, axis=1)
+
+    if params.att_use_scale:
+        scale = 1.0 / np.sqrt(key.shape[-1])
+    else:
+        scale = 1.0
 
     query_time_key = np.zeros((batch, n_heads, length))
     for i in range(batch):
         for j in range(n_heads):
             for k in range(length):
-                query_time_key[i, j, k] = np.sum(key[i, k, :] * query[j, :])
+                if params.att_split_key:
+                    query_time_key[i, j, k] = np.sum(key[i, j, k, :] * query[j, :]) * scale
+                else:
+                    query_time_key[i, j, k] = np.sum(key[i, 0, k, :] * query[j, :]) * scale
 
     weights = np.zeros((batch, n_heads, length))
     for i in range(batch):
@@ -345,17 +360,18 @@ def compute_self_attention(value, key, query, params):
     p = np.zeros((batch, n_heads, n_heads))
     for i in range(batch):
         p[i, :, :] = np.dot(weights[i, :, :], np.transpose(weights[i, :, :])) - np.eye(n_heads)
-    penalty = params.self_att_penalty_term * np.sum(np.square(p))
+    penalty = params.att_penalty_term * np.sum(np.square(p)) / batch
 
-    att_mean = np.zeros((batch, n_heads, dim))
-    att_stddev = np.zeros((batch, n_heads, dim))
+    att_mean = np.zeros((batch, n_heads, value_dim/n_heads))
+    att_stddev = np.zeros((batch, n_heads, value_dim/n_heads))
 
     for i in range(batch):
         for j in range(n_heads):
             att_mean[i, j, :] = np.dot(weights[i, j, :], value[i, j, :, :])
             att_stddev[i, j, :] = np.sqrt(np.dot(weights[i, j, :], (value[i, j, :, :] - att_mean[i, j, :]) ** 2) + 1e-12)
-    att_mean = np.reshape(att_mean, [batch, n_heads * dim])
-    att_stddev = np.reshape(att_stddev, [batch, n_heads * dim])
+
+    att_mean = np.reshape(att_mean, [batch, value_dim])
+    att_stddev = np.reshape(att_stddev, [batch, value_dim])
     att = np.concatenate([att_mean, att_stddev], axis=1)
     return att, penalty
 

@@ -1,4 +1,6 @@
 #!/bin/bash
+# The first version of multi-task learning.
+# Only share the lower layers between the speaker and phonetic networks.
 
 . ./cmd.sh
 . ./path.sh
@@ -6,6 +8,7 @@ set -e
 
 train_nj=40
 nnet_nj=40
+decode_nj=80
 
 # The kaldi fisher egs directory
 # kaldi_fisher=/home/liuyi/kaldi-master/egs/fisher
@@ -18,11 +21,27 @@ exp=$root/exp
 mfccdir=$root/mfcc
 vaddir=$root/mfcc
 
+gmmdir=$exp/tri5a_3k
 alidir=$exp/tri5a_ali_3k
+transmdl=$gmmdir/trans
 
 export trials=$data/test/trials
 
 stage=6
+
+if [ $stage -le -2 ]; then
+  # Make graph for ASR decoding
+  LM_fg=$data/local/lm_4gram/4gram-mincount/lm_unpruned.gz
+  utils/build_const_arpa_lm.sh $LM_fg $data/lang_test $data/lang_test_fg
+  utils/mkgraph.sh $data/lang_test $gmmdir $gmmdir/graph
+
+  # Create transition model using the alignments
+  # We need an additional file from Kaldi:
+  #   src/bin/train-transitions-prior.cc
+  mkdir -p $transmdl
+  train-transitions-prior $gmmdir/final.mdl "ark:gunzip -c $gmmdir/ali.*.gz|" $transmdl/final.trans_mdl $transmdl/prior.vec
+  exit 1
+fi
 
 if [ $stage -le -1 ]; then
   # link the directories
@@ -129,12 +148,37 @@ if [ $stage -le 6 ]; then
 #    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
 #    $nnetdir
 
-  # Train a baseline ASR using new data (re-implement ASR with Kaldi)
-  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_5.3
-  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_5.json \
+#  # Train a baseline ASR using new data (re-implement ASR with Kaldi)
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_6
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_6.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_7
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_7.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_6.2
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_6.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_7.2
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_7.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_8
+  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_8.json \
     $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
     $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
     $nnetdir
+
 
   exit 1
 fi
@@ -145,7 +189,7 @@ if [ $stage -le 7 ]; then
   scripts/prepare_pdf_for_multitask_egs.sh ${alidir}_test
 fi
 
-nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset
+nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_6
 checkpoint='last'
 
 if [ $stage -le 8 ]; then
@@ -181,5 +225,17 @@ if [ $stage -le 10 ]; then
   nnet/run_extract_mt_phone_embeddings.sh --cmd "$train_cmd" --nj $nnet_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
     --chunk-size 10000 --normalize false --node "zp_mu_relu" \
     $nnetdir $data/test_hires ${alidir}_test $nnetdir/xvectors_test_hires
+  exit 1
+fi
+
+if [ $stage -le 11 ]; then
+decode_nj=1
+  nnet/run_decode.sh --cmd "$train_cmd" --nj $decode_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
+    $gmmdir/graph $transmdl $nnetdir $data/test_hires.test $nnetdir/decode_test_hires.test
+
+#  # Rescore
+#  scripts/lmrescore_const_arpa.sh --stage 0 \
+#    --cmd "$train_cmd" ${data}/lang_test $data/lang_test_fg \
+#    ${data}/test_hires ${nnetdir}/decode_test_hires{,_fg} || exit 1
 fi
 

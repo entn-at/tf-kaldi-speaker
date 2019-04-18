@@ -152,10 +152,10 @@ class FeatureReader(object):
 class FeatureReaderV2(object):
     """Read kaldi features and alignments.
 
-    This is used for multitask training.
+    This is used for multitask_v1 training.
     """
 
-    def __init__(self, data_dir, ali_dir):
+    def __init__(self, data_dir, ali_dir, left_context, right_context):
         """data_dir contains feats.scp, utt2num_frames, vad.scp.
         ali_dir contains pdf.scp (NOT ali.scp) which is confusing here.
         ali.scp consists of transition ids while pdf.scp consists of pdf ids.
@@ -169,6 +169,8 @@ class FeatureReaderV2(object):
         self.ali_fd = {}
         self.vad_fd = {}
         self.fd = {}
+        self.left_context = left_context
+        self.right_context = right_context
 
         self.data_dir = data_dir
         self.ali_dir = ali_dir
@@ -228,6 +230,8 @@ class FeatureReaderV2(object):
 
         In order to load vad.scp and pdf.scp as well as feats.scp, we need the name of the feature.
         Unlike FeatureReader, the filename should not contain offset.
+
+        The feaure expansion is applied. The returned feature will be longer than the specified length.
         """
         utt = filename
         feats_filename, feats_offset = self.utt2feats_offset[utt]
@@ -243,31 +247,52 @@ class FeatureReaderV2(object):
             if binary == '\0B':
                 # Do we need to load the entire recording?
                 if length is not None:
+                    # The length is specified
                     if start is None:
                         # If the length is too long, clip it to #frames
                         length = num_features if length > num_features else length
                         if shuffle:
-                            # Sample a start point for phonetic training (assuming 4 frames will be sampled).
-                            start = random.randint(0, num_features - 4)
+                            start = random.randint(0, num_features-1)
                             if start + length > num_features:
                                 start = num_features - length
-                            # The phoneic examples are at the beginning of the segments (except for the last segment).
-                            mat = _read_submat_binary(self.fd[feats_filename], start, length)
+                            real_start = start - self.left_context
+                            real_length = length + self.left_context + self.right_context
                         else:
+                            # Load from the very beginning
                             start = 0
-                            mat = _read_submat_binary(self.fd[feats_filename], 0, length)
+                            real_start = start - self.left_context
+                            real_length = length + self.left_context + self.right_context
                     else:
                         assert not shuffle, "The start point is specified, thus shuffling is invalid."
                         if start + length > num_features:
+                            # The length is too long that we should shorten it.
                             length = num_features - start
-                            # print("The length %d is too long for %s start from %d. Clip to %d" %
-                            #       (length, utt, start, num_features - start))
-                        mat = _read_submat_binary(self.fd[feats_filename], start, length)
+                        # The left_context is considered
+                        real_start = start - self.left_context
+                        real_length = length + self.left_context + self.right_context
                 else:
-                    mat = _read_mat_binary(self.fd[feats_filename])
+                    # We want the entire utterance
                     start = 0
-                    length = mat.shape[0]
-                    assert length == num_features
+                    length = num_features
+                    real_start = start - self.left_context
+                    real_length = length + self.left_context + self.right_context
+
+                # Load the feature using real_start and real_length
+                # Note: The real_start can be < 0 and the real_length can be > num_features
+                # Do feature expansion if that happens.
+                tmp_start = max(real_start, 0)
+                tmp_end = min(real_start + real_length, num_features)
+                mat = _read_submat_binary(self.fd[feats_filename], tmp_start, tmp_end - tmp_start)
+                if real_start < 0:
+                    # Left expansion
+                    left_mat = np.tile(mat[0, :], [-real_start, 1])
+                    mat = np.concatenate([left_mat, mat], axis=0)
+
+                if real_start + real_length > num_features:
+                    # Right expansion
+                    right_mat = np.tile(mat[-1, :], [real_start + real_length - num_features, 1])
+                    mat = np.concatenate([mat, right_mat], axis=0)
+                assert(mat.shape[0] == real_length)
             else:
                 raise IOError("Cannot read features from %s" % feats_filename)
         except:
@@ -308,7 +333,8 @@ class FeatureReaderV2(object):
         except:
             raise IOError("Cannot read ali from %s" % ali_filename)
 
-        assert mat.shape[0] == vad.shape[0] and mat.shape[0] == ali.shape[0]
+        assert(mat.shape[0] == vad.shape[0] + self.left_context + self.right_context and
+               mat.shape[0] == ali.shape[0] + self.left_context + self.right_context)
         return mat, vad, ali, start
 
 

@@ -18,7 +18,7 @@
 
   "num_epochs": 100,
   "num_steps_per_epoch": 16000,
-  "reduce_lr_epochs": 4,
+  "reduce_lr_epochs": 1,
   "show_training_progress": 200,
   "keep_checkpoint_max": 100,
   "save_summary_steps": 8000,

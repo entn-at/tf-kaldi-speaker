@@ -12,6 +12,8 @@ def make_phone_masks(length, resample, num_frames_per_utt):
     :return: a mat with [n_selected_frames, 2], each row is the index of the selected frame
     """
     n_utts = length.shape[0]
+
+    # This sampling strategy will make the sampling probability of each frame the same
     if num_frames_per_utt == -1:
         mat = []
         for i in range(n_utts):
@@ -24,7 +26,7 @@ def make_phone_masks(length, resample, num_frames_per_utt):
         for i in range(n_utts):
             mat[i * num_frames_per_utt:(i+1) * num_frames_per_utt, 0] = i
             if resample[i] == 1:
-                # TODO: If resample is need, do we randomly sample the utterance, or use the consecutive N frames?
+                # Resample the last segment
                 tmp = []
                 for _ in range(num_frames_per_utt):
                     while True:
@@ -35,4 +37,19 @@ def make_phone_masks(length, resample, num_frames_per_utt):
                 mat[i * num_frames_per_utt:(i + 1) * num_frames_per_utt, 1] = tmp
             else:
                 mat[i * num_frames_per_utt:(i + 1) * num_frames_per_utt, 1] = np.arange(num_frames_per_utt, dtype=np.int32)
+
+    # # Totally random sampling (the central frames will get higher sampling probabilities)
+    # mat = np.zeros((length.shape[0] * num_frames_per_utt, 2), dtype=np.int32)
+    # for i in range(n_utts):
+    #     mat[i * num_frames_per_utt:(i + 1) * num_frames_per_utt, 0] = i
+    #     # Resample the last segment
+    #     tmp = []
+    #     for _ in range(num_frames_per_utt):
+    #         while True:
+    #             a = np.random.randint(0, length[i], dtype=np.int32)
+    #             if a not in tmp:
+    #                 tmp.append(a)
+    #                 break
+    #     mat[i * num_frames_per_utt:(i + 1) * num_frames_per_utt, 1] = tmp
+
     return mat

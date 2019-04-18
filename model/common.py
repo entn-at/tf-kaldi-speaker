@@ -110,8 +110,8 @@ def pairwise_cos_similarity(embeddings, epsilon=1e-12):
     return cos_similarity
 
 
-def dense_relu(features, num_nodes, endpoints, params, is_training=None, name="dense"):
-    """Dense connected layer
+def dense_bn_relu(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+    """Dense + bn + relu
 
     Args:
         features: The input features.
@@ -141,6 +141,59 @@ def dense_relu(features, num_nodes, endpoints, params, is_training=None, name="d
                                                  training=is_training,
                                                  name="%s_bn" % name)
         endpoints["%s_bn" % name] = features
+        features = relu(features, name='%s_relu' % name)
+        endpoints["%s_relu" % name] = features
+    return features
+
+
+def dense(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+    """Dense connected layer (affine)
+
+    Args:
+        features: The input features.
+        num_nodes: The number of the nodes in this layer.
+        endpoints: The endpoitns.
+        params: Parameters.
+        is_training:
+        name:
+    :return: The output of the layer. The endpoints also contains the intermediate outputs of this layer.
+    """
+    with tf.variable_scope(name):
+        features = tf.layers.dense(features,
+                                   num_nodes,
+                                   activation=None,
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                   name="%s_dense" % name)
+        endpoints["%s_dense" % name] = features
+    return features
+
+
+def dense_relu(features, num_nodes, endpoints, params, is_training=None, name="dense"):
+    """Dense connected layer (affine+relu)
+
+    Args:
+        features: The input features.
+        num_nodes: The number of the nodes in this layer.
+        endpoints: The endpoitns.
+        params: Parameters.
+        is_training:
+        name:
+    :return: The output of the layer. The endpoints also contains the intermediate outputs of this layer.
+    """
+    relu = tf.nn.relu
+    if "network_relu_type" in params.dict:
+        if params.network_relu_type == "prelu":
+            relu = prelu
+        if params.network_relu_type == "lrelu":
+            relu = tf.nn.leaky_relu
+
+    with tf.variable_scope(name):
+        features = tf.layers.dense(features,
+                                   num_nodes,
+                                   activation=None,
+                                   kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                   name="%s_dense" % name)
+        endpoints["%s_dense" % name] = features
         features = relu(features, name='%s_relu' % name)
         endpoints["%s_relu" % name] = features
     return features

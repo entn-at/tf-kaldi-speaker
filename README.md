@@ -58,7 +58,7 @@ Again, the backend classifier is integrated using Kaldi.
 * Standard x-vector architecture (with minor modification).
 * Angular softmax, additive margin softmax, additive angular margin softmax, triplet loss and other loss functions.
 * Self attention and other attention methods (*testing*).
-* I'm now working on multitask learning.
+* I'm now working on multitask_v1 learning.
 
 # Usage
  * The demos for SRE and VoxCeleb are included in egs/{sre,voxceleb}. Follow `run.sh` to go through the code.

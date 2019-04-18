@@ -12,9 +12,7 @@
   "self_att_num_heads": 1,
   "self_att_penalty_term": 0,
 
-  "embedding_node": "tdnn6_dense",
-
-  "learning_rate": "nnet_conf/learning_rate_decay_45",
+  "learning_rate": 0.005,
   "optimizer": "momentum",
   "momentum": 0.9,
   "use_nesterov": false,
@@ -23,9 +21,9 @@
   "weight_l2_regularizer": 1e-2,
   "batchnorm_momentum": 0.99,
 
-  "num_epochs": 45,
+  "num_epochs": 200,
   "num_steps_per_epoch": 16000,
-  "reduce_lr_epochs": 2,
+  "reduce_lr_epochs": 3,
   "show_training_progress": 200,
   "keep_checkpoint_max": 100,
   "save_summary_steps": 8000,
@@ -39,6 +37,6 @@
   "min_segment_len": 100,
   "max_segment_len": 300,
 
-  "early_stop_epochs": 6,
+  "early_stop_epochs": 8,
   "min_learning_rate": 1e-6
 }

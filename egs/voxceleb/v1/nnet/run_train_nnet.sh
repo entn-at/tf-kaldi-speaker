@@ -52,6 +52,11 @@ while [ $num_gpus_assigned -ne $num_gpus ]; do
   sleep 300
 done
 
+if [ -d $nnetdir/log ] && [ `ls $nnetdir/log | wc -l` -ge 1 ]; then
+  mkdir -p $nnetdir/.backup/log
+  cp $nnetdir/log/* $nnetdir/.backup/log
+fi
+
 # Activate the gpu virtualenv
 # The tensorflow is installed using pip (virtualenv). Modify the code if you activate TF by other ways.
 # Limit the GPU number to what we want.
