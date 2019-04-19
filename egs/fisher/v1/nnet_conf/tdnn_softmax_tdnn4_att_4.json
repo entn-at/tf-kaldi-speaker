@@ -13,7 +13,7 @@
   "att_value_num_nodes": [],
   "att_value_network_type": 0,
   "att_apply_nonlinear": false,
-  "att_use_scale": false,
+  "att_use_scale": true,
   "att_num_heads": 1,
   "att_split_key": false,
   "att_penalty_term": 0,

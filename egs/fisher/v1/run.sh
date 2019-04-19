@@ -186,25 +186,25 @@ if [ $stage -le 3 ]; then
 #    $nnetdir
 
 #  # Attention
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att
+#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att.2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_tdnn4_att.json \
 #    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
 #    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_2
+#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_2.2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_tdnn4_att_2.json \
 #    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
 #    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
 #    $nnetdir
 
-#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_3
+#  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_3.2
 #  nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_tdnn4_att_3.json \
 #    $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
 #    $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \
 #    $nnetdir
 
-  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_4
+  nnetdir=$exp/xvector_nnet_tdnn_softmax_tdnn4_att_4.2
   nnet/run_train_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/tdnn_softmax_tdnn4_att_4.json \
     $data/train_background_hires_nosil/train $data/train_background_hires_nosil/train/spklist \
     $data/train_background_hires_nosil/valid $data/train_background_hires_nosil/train/spklist \

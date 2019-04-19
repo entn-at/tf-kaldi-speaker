@@ -117,11 +117,6 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
                 value_features = dense_tanh(value_features, params.att_value_num_nodes[-1], endpoints, params, is_training,
                                             name=("att_value%d" % (len(params.att_value_num_nodes) - 1)))
 
-        # Debug
-        # Comment lines when running the code
-        endpoints["att_key"] = key_features
-        endpoints["att_value"] = value_features
-
         # The last element in att_key_num_nodes and att_value_num_nodes
         # is the dimension of the key and the value. In multi-head attention, they are extended n times.
         n_heads = params.att_num_heads
@@ -151,9 +146,6 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
         # TODO: How to decide the initial number of query?
         query = tf.get_variable("query", [n_heads, key_shape[-1]], dtype=tf.float32,
                                 initializer=tf.initializers.truncated_normal(stddev=0.1))
-
-        # Debug
-        endpoints["att_query"] = query
 
         if not params.att_split_key:
             query_time_key = tf.einsum('bmld, hd->blh', key_features, query, name="query_time_key")
@@ -198,6 +190,91 @@ def self_attention(features, aux_features, endpoints, params, is_training=None):
         tf.summary.scalar("attention_penalty", penalty)
 
     return att
+
+
+def ghost_vlad(features, aux_features, endpoints, params, is_training):
+    """NetVLAD and GhostVLAD
+
+    See:
+        NetVLAD: https://arxiv.org/abs/1511.07247
+        GhostVLAD: https://arxiv.org/abs/1810.09951
+
+    Args:
+        features: A tensor with shape [batch, length, dim].
+        aux_features:
+        endpoints: Outputs of different parts of the network.
+        params:
+            params.vlad_num_centers: #centers of the NetVLAD.
+            params.vlad_num_ghosts: #centers for the ghost clusters
+            params.vlad_key_input: The key used to compute the weights
+            params.vlad_key_num_nodes: #nodes of the network to compute the key.
+                                       An additional layer is applied to obtain the weights.
+            params.vlad_value_input: The value to be aggregated
+            params.vlad_value_num_nodes: #nodes of the network to compute the value.
+            params.vlad_final_l2_norm: Do the final L2 normalization after concatenation.
+        is_training: Used in BN.
+    :return:
+    """
+    relu = tf.nn.relu
+    if "network_relu_type" in params.dict:
+        if params.network_relu_type == "prelu":
+            relu = prelu
+        if params.network_relu_type == "lrelu":
+            relu = tf.nn.leaky_relu
+
+    with tf.variable_scope("vlad"):
+        value_features = endpoints[params.vlad_value_input]
+        key_features = endpoints[params.vlad_key_input]
+
+        # Value forward -> [b, l, d]
+        if len(params.vlad_value_num_nodes) > 0:
+            for index, num_nodes in enumerate(params.vlad_value_num_nodes):
+                value_features = dense_bn_relu(value_features, num_nodes, endpoints, params, is_training,
+                                               name=("vlad_value%d" % index))
+
+        # Key forward
+        if len(params.vlad_key_num_nodes) > 0:
+            for index, num_nodes in enumerate(params.vlad_key_num_nodes):
+                key_features = dense_bn_relu(key_features, num_nodes, endpoints, params, is_training,
+                                             name=("vlad_key%d" % index))
+
+        # Affine: wx+b -> [b, l, nclusters]
+        key_features = tf.layers.dense(key_features,
+                                       params.vlad_num_centers + params.vlad_num_ghosts,
+                                       activation=None,
+                                       kernel_regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer),
+                                       name="vlad_weight_affine")
+
+        # The weights
+        A = tf.nn.softmax(key_features, axis=-1, name="vlad_weights")
+        endpoints["vlad_weights"] = A
+
+        # Compute the residual
+        cluster = tf.get_variable("vlad_centers", [params.vlad_num_centers + params.vlad_num_ghosts, shape_list(value_features)[-1]],
+                                  dtype=tf.float32,
+                                  initializer=tf.contrib.layers.xavier_initializer(),
+                                  regularizer=tf.contrib.layers.l2_regularizer(params.weight_l2_regularizer))
+
+        res = tf.expand_dims(value_features, axis=2) - cluster
+        A = tf.expand_dims(A, axis=-1)
+        weighted_res = A * res
+        cluster_res = tf.reduce_sum(weighted_res, axis=1)
+
+        tf.logging.info("VLAD is used: %d clusters" % params.vlad_num_centers)
+        if params.vlad_num_ghosts > 0:
+            tf.logging.info("  %d ghost clusters is added" % params.vlad_num_ghosts)
+            cluster_res = cluster_res[:, :params.vlad_num_centers, :]
+
+        cluster_res = tf.nn.l2_normalize(cluster_res, axis=-1)
+        output = tf.reshape(cluster_res, [-1, params.vlad_num_centers * shape_list(cluster_res)[-1]])
+        if params.vlad_final_l2_norm:
+            output = tf.nn.l2_normalize(output, axis=-1)
+
+        endpoints["vlad_value"] = value_features
+        endpoints["vlad_key"] = key_features
+        endpoints["vlad_centers"] = cluster
+
+        return output
 
 
 # def aux_attention(features, aux_features, endpoints, params, is_training=None):
@@ -342,35 +419,77 @@ if __name__ == "__main__":
     # aux_features = tf.placeholder(tf.float32, shape=[None, None, 100], name="aux_features")
     # linguistic_features = tf.placeholder(tf.float32, shape=[None, None, 500], name="linguistic_features")
     # linguistic_features_all = {"linguistic": linguistic_features}
+
     from collections import OrderedDict
     endpoints = OrderedDict()
+    endpoints["value"] = features
+    endpoints["key"] = features
 
     from misc.utils import ParamsPlain
 
+    # # Self-attention (key transform)
+    # params = ParamsPlain()
+    # params.dict["att_key_input"] = "key"
+    # params.dict["att_key_num_nodes"] = [1500, 500]
+    # params.dict["att_key_network_type"] = 1
+    # params.dict["att_value_input"] = "value"
+    # params.dict["att_value_num_nodes"] = [1500]
+    # params.dict["att_value_network_type"] = 2
+    # params.dict["att_apply_nonlinear"] = False # True
+    # params.dict["att_use_scale"] = False # True
+    # params.dict["att_num_heads"] = 10
+    # params.dict["att_split_key"] = True # False
+    # params.dict["att_penalty_term"] = 1
+    #
+    # params.dict["weight_l2_regularizer"] = 1e-2
+    # params.dict["batchnorm_momentum"] = 0.99
+    #
+    # self_att = self_attention(None, None, endpoints, params, is_training=True)
+    # penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
+    # grads = tf.gradients(self_att, features)
+    # grads_penalty = tf.gradients(penalty_loss, features)
+    #
+    # with tf.Session() as sess:
+    #     sess.run(tf.global_variables_initializer())
+    #     import numpy as np
+    #     features_val = np.random.rand(num_data, num_length, num_dim).astype(np.float32)
+    #     features_val[0, :, :] = 1e-8 * features_val[0, :, :]
+    #     features_val[1, :, :] = 0
+    #     features_val[2, :, :] = 100 * features_val[2, :, :]
+    #     features_val[3, :, :] = 100
+    #     self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
+    #     key = endpoints_val["att_key"]
+    #     value = endpoints_val["att_value"]
+    #     query = endpoints_val["att_query"]
+    #     att_output = endpoints_val["att_output_before_nonlinear"]
+    #
+    #     from model.test_utils import compute_self_attention
+    #     self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
+    #     assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
+    #     assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
+    #     assert np.allclose(penalty_loss_val, penalty_loss_np)
+    #
+    #     for i in range(att_output.shape[0]):
+    #         for j in range(att_output.shape[1]):
+    #             if np.abs((att_output[i, j] - self_att_np[i ,j]) / (att_output[i, j]+1e-16)) > 1e-4:
+    #                 print("%d %d %.10f %.10f" % (i, j, att_output[i, j], self_att_np[i, j]))
+    #     assert np.allclose(att_output, self_att_np, rtol=1e-3)
+
     # Self-attention (key transform)
     params = ParamsPlain()
-    params.dict["att_key_input"] = "key"
-    params.dict["att_key_num_nodes"] = [1500, 500]
-    params.dict["att_key_network_type"] = 1
-    params.dict["att_value_input"] = "value"
-    params.dict["att_value_num_nodes"] = [1500]
-    params.dict["att_value_network_type"] = 2
-    params.dict["att_apply_nonlinear"] = False # True
-    params.dict["att_use_scale"] = False # True
-    params.dict["att_num_heads"] = 10
-    params.dict["att_split_key"] = True # False
-    params.dict["att_penalty_term"] = 1
+    params.dict["vlad_num_centers"] = 10
+    params.dict["vlad_num_ghosts"] = 2
+    params.dict["vlad_key_input"] = "key"
+    params.dict["vlad_key_num_nodes"] = [512]
+    params.dict["vlad_value_input"] = "value"
+    params.dict["vlad_value_num_nodes"]= []
+    params.dict["vlad_final_l2_norm"] = True
 
     params.dict["weight_l2_regularizer"] = 1e-2
     params.dict["batchnorm_momentum"] = 0.99
 
-    endpoints["value"] = features
-    endpoints["key"] = features
-    self_att = self_attention(None, None, endpoints, params, is_training=True)
-    penalty_loss = tf.reduce_sum(tf.get_collection("PENALTY"))
-    grads = tf.gradients(self_att, features)
-    grads_penalty = tf.gradients(penalty_loss, features)
-
+    vlad = ghost_vlad(None, None, endpoints, params, is_training=True)
+    grads = tf.gradients(vlad, endpoints["value"])
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         import numpy as np
@@ -379,24 +498,16 @@ if __name__ == "__main__":
         features_val[1, :, :] = 0
         features_val[2, :, :] = 100 * features_val[2, :, :]
         features_val[3, :, :] = 100
-        self_att_val, penalty_loss_val, grads_val, grads_penalty_val, endpoints_val = sess.run([self_att, penalty_loss, grads, grads_penalty, endpoints], feed_dict={features: features_val})
-        key = endpoints_val["att_key"]
-        value = endpoints_val["att_value"]
-        query = endpoints_val["att_query"]
-        att_output = endpoints_val["att_output_before_nonlinear"]
+        vlad_tf, grads_tf, endpoints_val = sess.run([vlad, grads, endpoints], feed_dict={features: features_val})
 
-        from model.test_utils import compute_self_attention
-        self_att_np, penalty_loss_np = compute_self_attention(value, key, query, params)
-        assert not np.any(np.isnan(grads_val)), "Gradient should not be nan"
-        assert not np.any(np.isnan(grads_penalty_val)), "Gradient should not be nan"
-        assert np.allclose(penalty_loss_val, penalty_loss_np)
+        value = endpoints_val["vlad_value"]
+        key = endpoints_val["vlad_key"]
+        centers = endpoints_val["vlad_centers"]
 
-        for i in range(att_output.shape[0]):
-            for j in range(att_output.shape[1]):
-                if np.abs((att_output[i, j] - self_att_np[i ,j]) / (att_output[i, j]+1e-16)) > 1e-4:
-                    print("%d %d %.10f %.10f" % (i, j, att_output[i, j], self_att_np[i, j]))
-        assert np.allclose(att_output, self_att_np, rtol=1e-3)
-
+        from model.test_utils import compute_ghost_vlad
+        vlad_np = compute_ghost_vlad(value, key, centers, params)
+        assert not np.any(np.isnan(grads_tf)), "Gradient should not be nan"
+        assert np.allclose(vlad_tf, vlad_np)
 
     # # Linguistic attention
     # params = ParamsPlain()

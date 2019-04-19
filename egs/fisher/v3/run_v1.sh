@@ -179,6 +179,19 @@ if [ $stage -le 6 ]; then
     $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
     $nnetdir
 
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_8.2
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_8.2.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+#  nnetdir=$exp/tuning_multitask/xvector_mt_tdnn_softmax_1e-2_subset_8.3
+#  nnet/run_train_mt_nnet.sh --cmd "$cuda_cmd" --env tf_gpu --continue-training false nnet_conf/mt_softmax_8.3.json \
+#    $data/train_background_hires_multitask_subset/train $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $data/train_background_hires_multitask_subset/valid $alidir $data/train_background_hires_multitask_subset/train/spklist \
+#    $nnetdir
+
+
 
   exit 1
 fi
@@ -229,13 +242,12 @@ if [ $stage -le 10 ]; then
 fi
 
 if [ $stage -le 11 ]; then
-decode_nj=1
   nnet/run_decode.sh --cmd "$train_cmd" --nj $decode_nj --use-gpu false --checkpoint $checkpoint --stage 0 \
-    $gmmdir/graph $transmdl $nnetdir $data/test_hires.test $nnetdir/decode_test_hires.test
+    $gmmdir/graph $transmdl $nnetdir $data/test_hires $nnetdir/decode_test_hires
 
-#  # Rescore
-#  scripts/lmrescore_const_arpa.sh --stage 0 \
-#    --cmd "$train_cmd" ${data}/lang_test $data/lang_test_fg \
-#    ${data}/test_hires ${nnetdir}/decode_test_hires{,_fg} || exit 1
+  # Rescore
+  scripts/lmrescore_const_arpa.sh --stage 0 \
+    --cmd "$train_cmd" ${data}/lang_test $data/lang_test_fg \
+    ${data}/test_hires ${nnetdir}/decode_test_hires{,_fg} || exit 1
 fi
 

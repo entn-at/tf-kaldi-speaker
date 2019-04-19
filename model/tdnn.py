@@ -1,5 +1,5 @@
 import tensorflow as tf
-from model.pooling import statistics_pooling, self_attention
+from model.pooling import statistics_pooling, self_attention, ghost_vlad
 from model.common import prelu, shape_list
 from collections import OrderedDict
 from six.moves import range
@@ -134,6 +134,8 @@ def tdnn(features, params, is_training=None, reuse_variables=None, aux_features=
             features = statistics_pooling(features, aux_features, endpoints, params, is_training)
         elif params.pooling_type == "self_attention":
             features = self_attention(features, aux_features, endpoints, params, is_training)
+        elif params.pooling_type == "ghost_vlad":
+            features = ghost_vlad(features, aux_features, endpoints, params, is_training)
         # elif params.pooling_type == "aux_attention":
         #     features = aux_attention(features, aux_features, endpoints, params, is_training)
         else:

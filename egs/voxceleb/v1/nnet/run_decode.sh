@@ -59,6 +59,8 @@ else
   env=tf_gpu
 fi
 
+rm -f $dir/lat.*.gz
+
 if [ "$post_decode_acwt" == 1.0 ]; then
   lat_wspecifier="ark:|gzip -c >$dir/lat.JOB.gz"
 else
@@ -90,10 +92,9 @@ if [ $stage -le 0 ]; then
 #      $transdir/prior.vec \
 #      "$nnetdir" \
 #      "ark:apply-cmvn-sliding --norm-vars=false --center=true --cmn-window=300 scp:$data/split1/1/feats.scp ark:- |" \
-#      "test.ark"
-##      "ark:| latgen-faster-mapped --minimize=$minimize --min-active=$min_active --max-active=$max_active --beam=$beam \
-##               --lattice-beam=$lattice_beam --acoustic-scale=$acwt --allow-partial=true --word-symbol-table=$graphdir/words.txt \
-##               $transdir/final.trans_mdl $graphdir/HCLG.fst ark:- \"$lat_wspecifier\""
+#      "ark:| latgen-faster-mapped --minimize=$minimize --min-active=$min_active --max-active=$max_active --beam=$beam \
+#               --lattice-beam=$lattice_beam --acoustic-scale=$acwt --allow-partial=true --word-symbol-table=$graphdir/words.txt \
+#               $transdir/final.trans_mdl $graphdir/HCLG.fst ark:- \"$lat_wspecifier\""
 #     exit 1
 
     deactivate

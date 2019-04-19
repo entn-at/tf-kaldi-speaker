@@ -34,7 +34,7 @@
   "phone_dim": 512,
   "phn_loss_type": "softmax",
   "?num_frames_per_utt": "How many frames in a segment should be used to train the phone network. If -1, use all.",
-  "num_frames_per_utt": 1,
+  "num_frames_per_utt": -1,
 
   "spk_embedding_node": "zs_mu_relu",
   "phn_embedding_node": "zp_mu_relu",

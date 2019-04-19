@@ -418,6 +418,24 @@ def compute_attention(value, key, query, params):
     return att, penalty
 
 
+def compute_ghost_vlad(value, key, centers, params):
+    """Compute NetVLAD or GhostVLAD
+    """
+    # Get the posterior
+    post = softmax(key)
+    res = np.expand_dims(value, axis=2) - centers[np.newaxis, np.newaxis, :, :]
+    res = np.sum(res * np.expand_dims(post, axis=3), axis=1)
+
+    # Remove the ghost centers
+    res = res[:, :params.vlad_num_centers, :]
+
+    res /= np.sqrt(np.sum(res ** 2, axis=-1, keepdims=True))
+    output = np.reshape(res, [value.shape[0], res.shape[1] * res.shape[2]])
+    if params.vlad_final_l2_norm:
+        output /= np.sqrt(np.sum(output ** 2, axis=1, keepdims=True))
+    return output
+
+
 def pairwise_cos_similarity_np(features):
     """Compute the pairwise cosine similarity.
 

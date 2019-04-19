@@ -593,9 +593,6 @@ class BaseMT(object):
                 features, vad, ali, length, labels, resample, valid_pos = data_loader.fetch()
                 assert(features.shape[1] == ali.shape[1] + left_context + right_context)
                 phn_masks = make_phone_masks(length, resample, self.params.num_frames_per_utt)
-                import pdb
-                pdb.set_trace()
-
                 self._training_egs_stat(labels, ali, valid_pos, phn_masks)
 
                 if step % self.params.save_summary_steps == 0 or step % self.params.show_training_progress == 0:
