@@ -125,7 +125,8 @@ dmypy.json
 ._.DS_Store*
 
 # backup
-egs/voxceleb/nnet_conf.bak/*
+egs/voxceleb/v1/nnet_conf.bak/*
+egs/voxceleb/v2/nnet_conf.bak/*
 egs/sre/v1/nnet_conf.bak/*
 egs/sre/v1/nnet_conf/test.json
 egs/mgb*
