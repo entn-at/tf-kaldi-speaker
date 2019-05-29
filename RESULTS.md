@@ -36,7 +36,7 @@ The pipeline is the same with Kaldi egs/sre10. For both SRE10 and SRE16, the res
 | ------- | ------- | ---- | ------------ | :------: | :--------: | :--------: | :------: | :--------: | :--------: |
 | Kaldi | Stat | Softmax | SRE04-SRE08 + SWBD | 1.68 | 0.0095 | 0.3764 | 8.95 | 0.0384 | 0.8671 |
 | TF/L2/LReLU/Att [3] | Att | Softmax | SRE04-08,12 + Mixer6 + Fisher + SWBD + VoxCeleb1&2 | - | - | - | 7.06 | - | - |
-| TDNN (ours) | Stat | Softmax | SRE04-SRE08 + SWBD | 1.22 | 0.0071 | 0.3250 | 7.59 | 0.0325 | 0.8324 |
+| TDNN (ours) | Stat | Softmax | SRE04-SRE08 + SWBD | 1.49 | 0.0084 | 0.3672 | 7.72 | 0.0330 | 0.8301 |
 | TDNN (ours) | Stat | ASoftmax (m=1) | SRE04-SRE08 + SWBD | 1.35 | 0.0075 | 0.2976 | 7.82 | 0.0327 | 0.7867 |
 | TDNN (ours) | Stat | ASoftmax (m=2) | SRE04-SRE08 + SWBD | 1.12 | 0.0065 | 0.2939 | 7.45 | 0.0314 | 0.7906 |
 | TDNN (ours) | Stat | ASoftmax (m=4) | SRE04-SRE08 + SWBD | 1.03 | 0.0061 | 0.3072 | 7.46 | 0.0317 | 0.8067 |
