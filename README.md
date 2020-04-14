@@ -1,3 +1,7 @@
+**Update 2020/4/14**
+
+I notice that the VoxSRC 2020 begins. This repository can be used as the baseline for this challenge. As I said, use ResNet-18+softmax give you an EER of 1.8% which is a strong result (using ~5900 speaker training set and test on the vox1 test set). Simply use AMSoftmax loss, try deeper networks, add new pooling method (e.g. self-attention) and implement advanced structure (e.g. squeeze-and-excitation), and I expect a much better result would be achieved. Enjoy training :-)
+
 **Update 2019/11/19**
 
 1. Multi-GPU training added. The number of GPUs can be specified in the config file. See the example for more details, e.g. egs/voxceleb/v3/run.sh.
